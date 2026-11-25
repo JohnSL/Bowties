@@ -63,12 +63,14 @@ fn free_node() -> NodeSlotFacts {
                     Some(set_aspect(i as u8, 2)),
                     Some(set_aspect(i as u8, 3)),
                 ],
+                link_address: None,
             })
             .collect(),
         logic: (1..=32)
-            .map(|i| LogicFact { index: i, in_use: false, function: Some(0), claimed: false, actions: vec![] })
+            .map(|i| LogicFact { index: i, in_use: false, function: Some(0), claimed: false, actions: vec![], sources: vec![] })
             .collect(),
         direct_lamps: (1..=16).collect(),
+        track_circuits: vec![],
     }
 }
 
@@ -113,10 +115,14 @@ fn int(v: i64) -> EditValue {
 }
 
 fn expected_edits(mast: u32, logic: u32, red: i64, green: i64) -> Vec<(String, EditValue)> {
+    expected_edits_named("Main signal", mast, logic, red, green)
+}
+
+fn expected_edits_named(name: &str, mast: u32, logic: u32, red: i64, green: i64) -> Vec<(String, EditValue)> {
     let m = format!("Rule to Aspect/Mast[{mast}]");
     let l = format!("Conditionals/Logic[{logic}]");
     let mut e: Vec<(String, EditValue)> = vec![
-        (format!("{m}/Mast Description"), EditValue::String { value: "Main signal".into() }),
+        (format!("{m}/Mast Description"), EditValue::String { value: name.into() }),
         (format!("{m}/Lamp Fade"), int(0)),
     ];
     // (rule name, track speed, lamps)
@@ -139,7 +145,7 @@ fn expected_edits(mast: u32, logic: u32, red: i64, green: i64) -> Vec<(String, E
     }
     e.push((format!("{m}/Mast Processing"), int(1)));
     e.extend([
-        (format!("{l}/Description"), EditValue::String { value: "Main signal occupancy".into() }),
+        (format!("{l}/Description"), EditValue::String { value: format!("{name} occupancy") }),
         (format!("{l}/Variable #1/Trigger"), int(1)),
         (format!("{l}/Variable #1/Source"), int(0)),
         (format!("{l}/Variable #1/set true"), EditValue::EventId { bytes: OCC }),
@@ -410,6 +416,7 @@ fn release_resets_every_rule_of_a_mast_every_event_of_a_logic_and_the_lamp_row()
                 ReleaseSlot::Mast(i) => format!("Rule to Aspect/Mast[{i}]/"),
                 ReleaseSlot::Logic(i) => format!("Conditionals/Logic[{i}]/"),
                 ReleaseSlot::DirectLamp(i) => format!("Direct Lamp Control/Lamp[{i}]/"),
+                ReleaseSlot::TrackCircuit(i) => format!("Track Circuits/Circuit[{i}]/"),
                 ReleaseSlot::LogicActions { index, .. } => format!("Conditionals/Logic[{index}]/"),
             };
             t.node_key == edit.node_key && edit.path.starts_with(&prefix)
@@ -612,7 +619,7 @@ fn a_one_block_compile_beside_an_outside_group_yields_the_pinned_edits_resources
 fn recompiling_with_recorded_placement_keeps_the_same_logic_even_when_a_lower_slot_is_free() {
     let mut c = recompile_input();
     // The recorded group sits at Logic 3; Logic 1 is free (Blocked) and lower.
-    c.nodes[0].logic[0] = LogicFact { index: 1, in_use: false, function: Some(0), claimed: false, actions: vec![] };
+    c.nodes[0].logic[0] = LogicFact { index: 1, in_use: false, function: Some(0), claimed: false, actions: vec![], sources: vec![] };
     use_logic(&mut c.nodes[0].logic[2]);
     c.logic_placement = vec![placement_of(&[3])];
     let result = compile_block_signals(&c);
@@ -635,4 +642,328 @@ fn outside_logic_with_an_undefined_function_blocks_the_board_and_names_the_logic
     assert!(issue.detail.contains("Logic 2"), "{}", issue.detail);
     assert_eq!(issue.signal_id.as_deref(), Some(signal_id(&line()).as_str()));
     assert!(result.edits.is_empty() && result.resources.is_empty() && result.placement.is_empty());
+}
+
+const LINK_B: [u8; 8] = [3, 3, 3, 3, 3, 3, 0, 2];
+const OCC_B: [u8; 8] = [1, 1, 1, 1, 1, 1, 0, 3];
+const CLR_B: [u8; 8] = [1, 1, 1, 1, 1, 1, 0, 4];
+
+fn two_block_line() -> BlockSignalsRequest {
+    let mut line = line();
+    line.blocks.push(SelectedBlock {
+        block_id: "block:b".into(),
+        name: "Block B".into(),
+        joined_to_previous: false,
+        turnouts: vec![],
+    });
+    line
+}
+
+fn two_block_ids(line: &BlockSignalsRequest) -> (String, String) {
+    let signals = bowties_core::signaling::preview_block_signals(line.clone()).signals;
+    (signals[0].signal_id.clone(), signals[1].signal_id.clone())
+}
+
+/// A two-block Line on one free board: the first signal has the second after it.
+fn two_block_input() -> CompileInput {
+    let mut line = two_block_line();
+    let (first, second) = two_block_ids(&line);
+    line.signal_names.insert(first.clone(), "First signal".into());
+    line.signal_names.insert(second.clone(), "Second signal".into());
+    let mut node = free_node();
+    node.masts[1].link_address = Some(LINK_B);
+    node.track_circuits = (1..=8)
+        .map(|i| TrackCircuitFact { index: i, in_use: false, claimed: false, link_address: None })
+        .collect();
+    CompileInput {
+        wiring: vec![
+            SignalWiring { signal_id: first, node_key: NODE.into(), red_output: 10, green_output: 9 },
+            SignalWiring { signal_id: second, node_key: NODE.into(), red_output: 12, green_output: 11 },
+        ],
+        line,
+        hardware: SignalHardwareFacts { hosts: vec![host()] },
+        nodes: vec![node],
+        occupancy: vec![
+            BlockOccupancyEvents { block_id: "block:a".into(), occupied: Some(OCC), clear: Some(CLR) },
+            BlockOccupancyEvents { block_id: "block:b".into(), occupied: Some(OCC_B), clear: Some(CLR_B) },
+        ],
+        saved_resources: vec![],
+        logic_placement: vec![],
+    }
+}
+
+fn mast_part(edits: Vec<(String, EditValue)>) -> Vec<(String, EditValue)> {
+    edits.into_iter().take_while(|(p, _)| p.starts_with("Rule to Aspect")).collect()
+}
+
+/// The internal signal's Track Circuit and its two Logic rungs (rung 2 first).
+fn internal_edits(name: &str, next_name: &str, mast: u32, first_logic: u32, circuit: u32) -> Vec<(String, EditValue)> {
+    let c = format!("Track Circuits/Circuit[{circuit}]");
+    let (l1, l2) = (
+        format!("Conditionals/Logic[{first_logic}]"),
+        format!("Conditionals/Logic[{}]", first_logic + 1),
+    );
+    let ev = |rule: u8| EditValue::EventId { bytes: set_aspect(mast as u8, rule) };
+    let s = |v: String| EditValue::String { value: v };
+    vec![
+        (format!("{c}/Remote Mast Description"), s(next_name.into())),
+        (format!("{c}/Link Address"), EditValue::EventId { bytes: LINK_B }),
+        (format!("{l2}/Description"), s(format!("{name} next signal"))),
+        (format!("{l2}/Variable #1/Trigger"), int(0)),
+        (format!("{l2}/Variable #1/Source"), int(circuit as i64)),
+        (format!("{l2}/Variable #1/Track Speed"), int(0)),
+        (format!("{l2}/Logic Operation"), int(7)),
+        (format!("{l2}/Variable #2/Trigger"), int(2)),
+        (format!("{l2}/Action#1/when true"), int(0)),
+        (format!("{l2}/Action#1/when false"), int(0)),
+        (format!("{l2}/Time Delay before action/Delay Time (1-60000)"), int(0)),
+        (format!("{l2}/Time Delay before action/Units"), int(0)),
+        (format!("{l2}/Action#2[1]/Condition"), int(3)),
+        (format!("{l2}/Action#2[1]/Action Event"), ev(2)),
+        (format!("{l2}/Action#2[2]/Condition"), int(4)),
+        (format!("{l2}/Action#2[2]/Action Event"), ev(3)),
+        (format!("{l2}/Action#2[3]/Condition"), int(0)),
+        (format!("{l2}/Action#2[4]/Condition"), int(0)),
+        (format!("{l2}/Function"), int(2)),
+        (format!("{l1}/Description"), s(format!("{name} occupancy"))),
+        (format!("{l1}/Variable #1/Trigger"), int(1)),
+        (format!("{l1}/Variable #1/Source"), int(0)),
+        (format!("{l1}/Variable #1/set true"), EditValue::EventId { bytes: OCC }),
+        (format!("{l1}/Variable #1/set false"), EditValue::EventId { bytes: CLR }),
+        (format!("{l1}/Logic Operation"), int(7)),
+        (format!("{l1}/Variable #2/Trigger"), int(2)),
+        (format!("{l1}/Action#1/when true"), int(0)),
+        (format!("{l1}/Action#1/when false"), int(4)),
+        (format!("{l1}/Time Delay before action/Delay Time (1-60000)"), int(0)),
+        (format!("{l1}/Time Delay before action/Units"), int(0)),
+        (format!("{l1}/Action#2[1]/Condition"), int(3)),
+        (format!("{l1}/Action#2[1]/Action Event"), ev(1)),
+        (format!("{l1}/Action#2[2]/Condition"), int(0)),
+        (format!("{l1}/Action#2[3]/Condition"), int(0)),
+        (format!("{l1}/Action#2[4]/Condition"), int(0)),
+        (format!("{l1}/Function"), int(1)),
+    ]
+}
+
+fn held(signal_id: &str, mast: u32, circuits: Vec<u32>) -> PlannedSignalResources {
+    PlannedSignalResources {
+        signal_id: signal_id.into(),
+        resources: SignalResources { node_key: NODE.into(), mast, track_circuits: circuits },
+    }
+}
+
+fn group(signal_id: &str, first: u32, length: u32) -> PlacedLogicGroup {
+    PlacedLogicGroup { facility_id: "abs:test".into(), signal_id: signal_id.into(), first, length }
+}
+
+/// The last signal's terminal recipe on its own mast and Logic, with its block's events.
+fn last_edits(mast: u32, logic: u32) -> Vec<(String, EditValue)> {
+    let mut last = expected_edits_named("Second signal", mast, logic, 12, 11);
+    for (path, value) in last.iter_mut() {
+        if path.ends_with("Variable #1/set true") {
+            *value = EditValue::EventId { bytes: OCC_B };
+        } else if path.ends_with("Variable #1/set false") {
+            *value = EditValue::EventId { bytes: CLR_B };
+        }
+    }
+    last
+}
+
+#[test]
+fn two_blocks_give_the_first_signal_a_two_rung_group_and_a_track_circuit() {
+    let input = two_block_input();
+    let (first, second) = two_block_ids(&input.line);
+    let result = compile_block_signals(&input);
+    assert_eq!(result.issues, vec![]);
+
+    let mut expected = mast_part(expected_edits_named("First signal", 1, 1, 10, 9));
+    expected.extend(internal_edits("First signal", "Second signal", 1, 1, 1));
+    expected.extend(last_edits(2, 3));
+    assert_eq!(pairs(&result), expected);
+
+    assert_eq!(result.resources, vec![held(&first, 1, vec![1]), held(&second, 2, vec![])]);
+    assert_eq!(
+        result.placement,
+        vec![NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 1, 2), group(&second, 3, 1)] }]
+    );
+}
+
+fn scoped<'a>(c: &'a CompiledBlockSignals, code: CompileIssueCode) -> &'a CompileIssue {
+    c.issues.iter().find(|i| i.code == code).unwrap_or_else(|| panic!("{code:?} in {:?}", c.issues))
+}
+
+fn assert_blocked(c: &CompiledBlockSignals) {
+    assert!(c.edits.is_empty() && c.resources.is_empty() && c.placement.is_empty());
+}
+
+/// Mark Mast 1 and pins 9 and 10 as the saved first signal's own.
+fn own_first_mast(c: &mut CompileInput, mast: u32) {
+    c.nodes[0].masts[mast as usize - 1].in_use = true;
+    c.nodes[0].masts[mast as usize - 1].claimed = true;
+    for o in c.hardware.hosts[0].outputs.iter_mut().filter(|o| o.ordinal == 9 || o.ordinal == 10) {
+        o.owner = Some(SignalOutputOwner::Mast(mast));
+    }
+}
+
+#[test]
+fn signals_on_two_boards_are_one_scoped_issue() {
+    let mut c = two_block_input();
+    c.wiring[1].node_key = "050101010799".into();
+    let result = compile_block_signals(&c);
+    assert!(codes(&result).contains(&CompileIssueCode::UnsupportedBoards), "{:?}", result.issues);
+    assert_blocked(&result);
+}
+
+#[test]
+fn a_second_signal_without_wiring_names_that_signal() {
+    let mut c = two_block_input();
+    let (_, second) = two_block_ids(&c.line);
+    c.wiring.pop();
+    let result = compile_block_signals(&c);
+    assert_eq!(scoped(&result, CompileIssueCode::WiringMissing).signal_id.as_deref(), Some(second.as_str()));
+    assert_blocked(&result);
+}
+
+#[test]
+fn a_new_signal_takes_the_lowest_free_mast_another_signal_does_not_hold() {
+    let mut c = two_block_input();
+    let (first, second) = two_block_ids(&c.line);
+    // The saved first signal keeps Mast 2; the new second signal takes Mast 1.
+    c.nodes[0].masts[0].link_address = Some(LINK_B);
+    own_first_mast(&mut c, 2);
+    c.saved_resources = vec![held(&first, 2, vec![])];
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources, vec![held(&first, 2, vec![1]), held(&second, 1, vec![])]);
+}
+
+#[test]
+fn a_saved_signal_keeps_its_circuit_and_a_new_need_takes_the_lowest_untaken() {
+    let mut c = two_block_input();
+    let (first, _) = two_block_ids(&c.line);
+    c.nodes[0].track_circuits[0].in_use = true;
+    c.nodes[0].track_circuits[1].in_use = true;
+    c.nodes[0].track_circuits[1].claimed = true;
+    c.saved_resources = vec![held(&first, 1, vec![2])];
+    own_first_mast(&mut c, 1);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources[0].resources.track_circuits, vec![2]);
+
+    let mut fresh = two_block_input();
+    fresh.nodes[0].track_circuits[0].in_use = true;
+    let result = compile_block_signals(&fresh);
+    assert_eq!(result.resources[0].resources.track_circuits, vec![2]);
+}
+
+#[test]
+fn no_free_track_circuit_and_unread_link_address_block_the_first_signal() {
+    let (first, _) = two_block_ids(&two_block_line());
+
+    let mut c = two_block_input();
+    c.nodes[0].track_circuits.iter_mut().for_each(|t| t.in_use = true);
+    let result = compile_block_signals(&c);
+    assert_eq!(scoped(&result, CompileIssueCode::NoFreeTrackCircuit).signal_id.as_deref(), Some(first.as_str()));
+    assert_blocked(&result);
+
+    for link in [None, Some([0u8; 8])] {
+        let mut c = two_block_input();
+        c.nodes[0].masts[1].link_address = link;
+        let result = compile_block_signals(&c);
+        let issue = scoped(&result, CompileIssueCode::LinkAddressMissing);
+        assert_eq!(issue.signal_id.as_deref(), Some(first.as_str()));
+        assert!(issue.detail.contains("Second signal"), "{}", issue.detail);
+        assert_blocked(&result);
+    }
+
+    let mut c = two_block_input();
+    c.nodes[0].masts[0].set_aspect_events[1] = None;
+    let result = compile_block_signals(&c);
+    assert_eq!(scoped(&result, CompileIssueCode::AspectEventsMissing).signal_id.as_deref(), Some(first.as_str()));
+}
+
+/// Function, Description and the eight event leaves of a Logic reset.
+const LOGIC_RESET_EDITS: usize = 10;
+
+#[test]
+fn a_saved_one_block_facility_gaining_a_block_moves_its_group_and_resets_the_old_logic_last() {
+    // The saved one-block group sits at Logic 1 and another facility holds Logic 2, so the
+    // group moves to the lowest free run.
+    let mut c = two_block_input();
+    let (first, second) = two_block_ids(&c.line);
+    own_first_mast(&mut c, 1);
+    c.nodes[0].masts[0].link_address = Some(LINK_B);
+    c.saved_resources = vec![held(&first, 1, vec![])];
+    for l in c.nodes[0].logic.iter_mut().take(2) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    c.logic_placement = vec![NodeLogicPlacement {
+        node_key: NODE.into(),
+        groups: vec![
+            group(&first, 1, 1),
+            PlacedLogicGroup { facility_id: "abs:other".into(), signal_id: "signal:other".into(), first: 2, length: 1 },
+        ],
+    }];
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    let groups = &result.placement[0].groups;
+    assert!(groups.contains(&group(&first, 3, 2)), "{groups:?}");
+    assert!(groups.contains(&group(&second, 5, 1)), "{groups:?}");
+    let p = pairs(&result);
+    let function_at = |logic: u32, value: i64| {
+        p.iter().position(|(path, v)| path == &format!("Conditionals/Logic[{logic}]/Function") && *v == int(value))
+    };
+    let terminator = function_at(4, 2).expect("terminator written");
+    let new_group = function_at(3, 1).expect("new group written");
+    let old_reset = function_at(1, 0).expect("old Logic reset");
+    assert!(terminator < new_group && new_group < old_reset);
+    assert_eq!(old_reset, p.len() - LOGIC_RESET_EDITS, "the old Logic reset is the last edit set");
+    assert!(p.iter().all(|(path, _)| !path.starts_with("Conditionals/Logic[2]")), "another facility is untouched");
+}
+
+#[test]
+fn a_saved_two_block_facility_recompiled_as_one_block_shrinks_and_releases_after_the_recipe() {
+    let mut c = input();
+    let sid = signal_id(&c.line);
+    c.saved_resources = vec![held(&sid, 1, vec![3])];
+    c.logic_placement = vec![NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&sid, 1, 2)] }];
+    c.nodes[0].masts[0].in_use = true;
+    c.nodes[0].masts[0].claimed = true;
+    for l in c.nodes[0].logic.iter_mut().take(2) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    c.nodes[0].track_circuits = (1..=8)
+        .map(|i| TrackCircuitFact { index: i, in_use: i == 3, claimed: i == 3, link_address: None })
+        .collect();
+    for o in c.hardware.hosts[0].outputs.iter_mut().filter(|o| o.ordinal == 9 || o.ordinal == 10) {
+        o.owner = Some(SignalOutputOwner::Mast(1));
+    }
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources, vec![held(&sid, 1, vec![])]);
+    assert_eq!(result.placement, vec![placement_of(&[1])]);
+    let p = pairs(&result);
+    let recipe = expected_edits(1, 1, 10, 9);
+    assert_eq!(&p[..recipe.len()], &recipe[..]);
+    let rest: Vec<&str> = p[recipe.len()..].iter().map(|(path, _)| path.as_str()).collect();
+    assert!(rest[0].starts_with("Conditionals/Logic[2]/"), "{rest:?}");
+    assert_eq!(rest.len(), LOGIC_RESET_EDITS + 2);
+    assert!(rest[rest.len() - 2].starts_with("Track Circuits/Circuit[3]/Remote Mast Description"));
+    assert_eq!(p.last().unwrap().1, EditValue::FreshEventId);
+}
+
+#[test]
+fn no_free_logic_names_the_signal_that_does_not_fit() {
+    // Only Logic 1 and 2 are free: the first signal's two-rung group takes both and the
+    // second signal's one Logic has nowhere to go.
+    let mut c = two_block_input();
+    let (first, second) = two_block_ids(&c.line);
+    c.nodes[0].logic.iter_mut().skip(2).for_each(use_logic);
+    let result = compile_block_signals(&c);
+    let issue = scoped(&result, CompileIssueCode::NoFreeLogic);
+    assert_eq!(issue.signal_id.as_deref(), Some(second.as_str()));
+    assert_ne!(issue.signal_id.as_deref(), Some(first.as_str()));
+    assert_blocked(&result);
 }

@@ -1,7 +1,7 @@
-//! Pure compiler for the one-block Automatic Block Signals terminal recipe.
+//! Pure compiler for the Automatic Block Signals recipe on one Signal LCC.
 //!
 //! Turns a Line (the facility's block list and policy settings), the wiring
-//! chosen for its signal and read-only node facts into configuration edits,
+//! chosen for each of its signals and read-only node facts into configuration edits,
 //! claimed mast/Logic slots and blocking issues. No I/O and no CDI
 //! addresses: each edit is addressed by a CDI path for its node and carries a
 //! typed value; the backend resolves paths to space/address.
@@ -17,14 +17,14 @@
 //!
 //! Masts never move: a saved signal keeps the mast in its recorded resources.
 //! Logic placement is board-wide and owned by [`super::logic_placement`]: the
-//! recipe describes its Logic relative to the group's first slot and the
-//! planner supplies the slot.
+//! recipe describes each signal's Logic relative to its group's first slot and
+//! the planner supplies the slot.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
     project_signal_binding, ApproachLighting, BlockSignalsRequest, EntranceEnd, ExitEnd, Movements,
-    ProposalIssue, SignalBindingSelection, SignalHardwareFacts, SignalOutputOwner, SignalPreview,
+    NextSignal, ProposalIssue, SignalBindingSelection, SignalHardwareFacts, SignalOutputOwner, SignalPreview,
 };
 use crate::layout::channels::{ChannelBinding, ChannelRole};
 use super::logic_placement::{
@@ -73,6 +73,9 @@ pub struct MastFact {
     /// The `set aspect` event of every Rule on the mast, in rule order
     /// (the recipe uses Rules 1, 2 and 3).
     pub set_aspect_events: Vec<Option<[u8; 8]>>,
+    /// The mast's `Link Address` event as read from the board; `None` when unread.
+    #[serde(default)]
+    pub link_address: Option<[u8; 8]>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -92,6 +95,26 @@ pub struct LogicFact {
     /// The Logic's `Action#2` rows, in order.
     #[serde(default)]
     pub actions: Vec<LogicAction>,
+    /// The raw `Variable #1/Source` and `Variable #2/Source` values that were read
+    /// (1..=8 name Track Circuits 1..=8; 0 is the Logic's own events).
+    #[serde(default)]
+    pub sources: Vec<i64>,
+}
+
+/// One Track Circuit of a board.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackCircuitFact {
+    /// 1-based circuit number.
+    pub index: u32,
+    /// A facility claims it, or active Logic Bowties does not own uses it as a Source.
+    pub in_use: bool,
+    /// A facility claims the circuit.
+    #[serde(default)]
+    pub claimed: bool,
+    /// The circuit's `Link Address` as read; `None` when unread.
+    #[serde(default)]
+    pub link_address: Option<[u8; 8]>,
 }
 
 /// One of a Logic's four event-sending actions.
@@ -112,6 +135,8 @@ pub struct NodeSlotFacts {
     /// 1-based Direct Lamp Control rows present on the node.
     #[serde(default)]
     pub direct_lamps: Vec<u32>,
+    #[serde(default)]
+    pub track_circuits: Vec<TrackCircuitFact>,
 }
 
 /// The protected block's detector event IDs.
@@ -180,14 +205,14 @@ pub enum CompileIssueCode {
     LogicUnterminatedGroup,
     /// A Logic's Function has not been read.
     LogicUnread,
-    /// A saved group would need a different length (not supported yet).
-    LogicResizeUnsupported,
     /// A requested release names an owner that is facility-owned, not an
     /// owner, or not on a loaded node.
     ReleaseInvalid,
     OccupancyEventsMissing,
     AspectEventsMissing,
-    UnsupportedBlockCount,
+    UnsupportedBoards,
+    NoFreeTrackCircuit,
+    LinkAddressMissing,
     UnsupportedMovements,
     UnsupportedEnds,
     UnsupportedAspects,
@@ -215,135 +240,343 @@ pub struct CompiledBlockSignals {
     pub edits: Vec<NodeConfigEdit>,
     /// Each signal's mast and Track Circuits.
     pub resources: Vec<PlannedSignalResources>,
-    /// The wiring board's whole new Logic placement (one entry).
+    /// The wiring board's whole new Logic placement (one entry; empty with issues).
     pub placement: Vec<NodeLogicPlacement>,
     pub issues: Vec<CompileIssue>,
 }
 
-/// Compile the one-block terminal recipe. Deterministic: signals, slots and
-/// edits are chosen and ordered from the inputs alone, lowest free slot first.
-/// With any issue, `edits`, `resources` and `placement` are empty.
+/// Compile the Automatic Block Signals recipe for every signal of a Line on one
+/// board. Deterministic: signals, slots and edits are chosen and ordered from
+/// the inputs alone, lowest free slot first, in chain order. A signal with a
+/// signal after it gets a two-rung group and a Track Circuit; the last signal
+/// gets the terminal recipe. With any issue, `edits`, `resources` and
+/// `placement` are empty.
 pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     let mut out = CompiledBlockSignals::default();
     let mut ctx = IssueSink { issues: &mut out.issues, signal_id: None, node_key: None };
-    let signals = super::chain::derive_signals(&input.line, &mut Vec::new());
+    let mut signals = super::chain::derive_signals(&input.line, &mut Vec::new());
     ctx.signal_id = signals.first().map(|s| s.signal_id.clone());
     check_scope(input, &signals, &mut ctx);
-    let Some(mut signal) = signals.into_iter().next() else {
+    if signals.is_empty() {
         return out;
-    };
-    let Some(wiring) = input.wiring.iter().find(|w| w.signal_id == signal.signal_id) else {
-        ctx.push(CompileIssueCode::WiringMissing, "No Signal LCC outputs are chosen for this signal.");
-        return out;
-    };
-    ctx.node_key = Some(wiring.node_key.clone());
-
+    }
     let facility_id = input.line.facility_id.clone();
-    let own = input
-        .saved_resources
+    let wiring_of = |signal_id: &str| input.wiring.iter().find(|w| w.signal_id == signal_id);
+    let Some(board_key) = signals.iter().find_map(|s| wiring_of(&s.signal_id)).map(|w| w.node_key.clone()) else {
+        for signal in &signals {
+            ctx.signal_id = Some(signal.signal_id.clone());
+            ctx.push(CompileIssueCode::WiringMissing, "No Signal LCC outputs are chosen for this signal.");
+        }
+        return out;
+    };
+    let node = input.nodes.iter().find(|n| same_node(&n.node_key, &board_key));
+    let saved_of = |signal_id: &str| {
+        input.saved_resources.iter().find(|r| r.signal_id == signal_id).map(|r| &r.resources)
+    };
+    // Saved signals keep their mast and circuit, so new signals never take them.
+    let mut taken_masts: Vec<u32> = signals
         .iter()
-        .find(|r| r.signal_id == signal.signal_id)
-        .map(|r| &r.resources);
-    let own_masts: Vec<u32> = own
-        .filter(|r| same_node(&r.node_key, &wiring.node_key))
+        .filter_map(|s| saved_of(&s.signal_id))
+        .filter(|r| same_node(&r.node_key, &board_key))
         .map(|r| r.mast)
-        .into_iter()
         .collect();
-    check_binding(&mut signal, wiring, &input.hardware, &own_masts, &mut ctx);
+    let mut taken_circuits: Vec<u32> = signals
+        .iter()
+        .filter_map(|s| saved_of(&s.signal_id))
+        .flat_map(|r| r.track_circuits.iter().copied())
+        .collect();
 
-    let node = input.nodes.iter().find(|n| same_node(&n.node_key, &wiring.node_key));
-    let mast = if own.is_some() {
-        let mast = own_masts
-            .first()
-            .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == *i)));
-        if mast.is_none() {
+    let mut plans: Vec<SignalPlan> = Vec::new();
+    for signal in signals.iter_mut() {
+        ctx.signal_id = Some(signal.signal_id.clone());
+        ctx.node_key = None;
+        let Some(wiring) = wiring_of(&signal.signal_id) else {
+            ctx.push(CompileIssueCode::WiringMissing, "No Signal LCC outputs are chosen for this signal.");
+            continue;
+        };
+        ctx.node_key = Some(wiring.node_key.clone());
+        let own = saved_of(&signal.signal_id);
+        let own_masts: Vec<u32> = own
+            .filter(|r| same_node(&r.node_key, &wiring.node_key))
+            .map(|r| r.mast)
+            .into_iter()
+            .collect();
+        check_binding(signal, wiring, &input.hardware, &own_masts, &mut ctx);
+
+        let mast = if own.is_some() {
+            let mast = own_masts
+                .first()
+                .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == *i)));
+            if mast.is_none() {
+                ctx.push(
+                    CompileIssueCode::ClaimedSlotUnavailable,
+                    "The mast this facility already uses is not available on the chosen Signal LCC.",
+                );
+            }
+            mast
+        } else {
+            let mast = node.and_then(|n| free_mast(n, &taken_masts));
+            match mast {
+                Some(m) => taken_masts.push(m.index),
+                None => {
+                    let outside = node.map_or(0, |n| n.masts.iter().filter(|m| m.in_use && !m.claimed).count());
+                    ctx.push(CompileIssueCode::NoFreeMast, &no_free_detail("mast", outside));
+                }
+            }
+            mast
+        };
+        let next_signal_id = match &signal.next {
+            NextSignal::Signal { signal_id } => Some(signal_id.clone()),
+            _ => None,
+        };
+        plans.push(SignalPlan {
+            signal_id: signal.signal_id.clone(),
+            name: signal.name.clone(),
+            wiring: wiring.clone(),
+            protected_block_ids: signal.protected_block_ids.clone(),
+            mast: mast.map(|m| m.index),
+            next_signal_id,
+            circuit: None,
+            released_circuits: Vec::new(),
+        });
+    }
+
+    // Track Circuits and the next signal's Link Address, once every mast is chosen.
+    for i in 0..plans.len() {
+        ctx.signal_id = Some(plans[i].signal_id.clone());
+        ctx.node_key = Some(plans[i].wiring.node_key.clone());
+        let saved = saved_of(&plans[i].signal_id).map(|r| r.track_circuits.clone()).unwrap_or_default();
+        let Some(next_id) = plans[i].next_signal_id.clone() else {
+            plans[i].released_circuits = saved;
+            continue;
+        };
+        let circuit = match saved.first() {
+            Some(held) => {
+                if !node.is_some_and(|n| n.track_circuits.iter().any(|c| c.index == *held)) {
+                    ctx.push(
+                        CompileIssueCode::ClaimedSlotUnavailable,
+                        "The Track Circuit this facility already uses is not available on the chosen Signal LCC.",
+                    );
+                }
+                plans[i].released_circuits = saved[1..].to_vec();
+                Some(*held)
+            }
+            None => {
+                let free = node.and_then(|n| {
+                    n.track_circuits
+                        .iter()
+                        .filter(|c| !c.in_use && !taken_circuits.contains(&c.index))
+                        .map(|c| c.index)
+                        .min()
+                });
+                match free {
+                    Some(c) => taken_circuits.push(c),
+                    None => {
+                        let outside =
+                            node.map_or(0, |n| n.track_circuits.iter().filter(|c| c.in_use && !c.claimed).count());
+                        ctx.push(CompileIssueCode::NoFreeTrackCircuit, &no_free_detail("Track Circuit", outside));
+                    }
+                }
+                free
+            }
+        };
+        plans[i].circuit = circuit;
+        let next_mast = plans.iter().find(|p| p.signal_id == next_id).and_then(|p| p.mast);
+        if let Some(next_mast) = next_mast {
+            if link_address_of(node, next_mast).is_none() {
+                let next_name = signals.iter().find(|s| s.signal_id == next_id).map_or("the next signal", |s| s.name.as_str());
+                ctx.push(
+                    CompileIssueCode::LinkAddressMissing,
+                    &format!("The Link Address of {next_name}'s mast has not been read from the board."),
+                );
+            }
+        }
+    }
+
+    // Occupancy and set-aspect events per signal.
+    for plan in &plans {
+        ctx.signal_id = Some(plan.signal_id.clone());
+        ctx.node_key = Some(plan.wiring.node_key.clone());
+        if plan.occupancy(input).is_none() {
             ctx.push(
-                CompileIssueCode::ClaimedSlotUnavailable,
-                "The mast this facility already uses is not available on the chosen Signal LCC.",
+                CompileIssueCode::OccupancyEventsMissing,
+                "The protected block has no occupied and clear event IDs.",
             );
         }
-        mast
-    } else {
-        let mast = node.and_then(free_mast);
-        if mast.is_none() {
-            let outside = node.map_or(0, |n| n.masts.iter().filter(|m| m.in_use && !m.claimed).count());
-            ctx.push(CompileIssueCode::NoFreeMast, &no_free_detail("mast", outside));
+        if let Some(mast) = plan.mast {
+            if plan.aspect_events(node, mast).is_none() {
+                let wanted = if plan.next_signal_id.is_some() { "Stop, Approach and Clear" } else { "Stop and Clear" };
+                ctx.push(
+                    CompileIssueCode::AspectEventsMissing,
+                    &format!("The chosen mast's {wanted} set-aspect events are not available."),
+                );
+            }
         }
-        mast
-    };
+    }
 
+    // One planner call for the board, one group per signal.
+    ctx.signal_id = signals.first().map(|s| s.signal_id.clone());
+    ctx.node_key = Some(board_key.clone());
     let recorded: Vec<PlacedLogicGroup> = input
         .logic_placement
         .iter()
-        .filter(|board| same_node(&board.node_key, &wiring.node_key))
+        .filter(|board| same_node(&board.node_key, &board_key))
         .flat_map(|board| board.groups.iter().cloned())
         .collect();
     let slot_facts: Vec<LogicSlotFact> = node
         .map(|n| n.logic.iter().map(|l| LogicSlotFact { index: l.index, function: l.function }).collect())
         .unwrap_or_default();
-    // One group of one Logic per signal in this release.
-    let demand = [LogicGroupDemand { signal_id: signal.signal_id.clone(), length: 1 }];
+    let demand: Vec<LogicGroupDemand> = signals
+        .iter()
+        .map(|s| LogicGroupDemand {
+            signal_id: s.signal_id.clone(),
+            length: if matches!(s.next, NextSignal::Signal { .. }) { 2 } else { 1 },
+        })
+        .collect();
     let planned = plan_logic_placement(&slot_facts, &recorded, &facility_id, &demand);
     let outside_logic = node.map_or(0, |n| n.logic.iter().filter(|l| l.in_use && !l.claimed).count());
     for issue in &planned.issues {
         let (code, detail) = map_placement_issue(issue, outside_logic);
+        let board_wide = ctx.signal_id.clone();
+        if issue.signal_id.is_some() {
+            ctx.signal_id = issue.signal_id.clone();
+        }
         ctx.push_logic(code, &detail, issue.logic.clone());
+        ctx.signal_id = board_wide;
     }
-    let group = planned
-        .placement
-        .iter()
-        .find(|g| g.facility_id == facility_id && g.signal_id == signal.signal_id)
-        .cloned();
-    if let Some(group) = &group {
+    let group_of = |signal_id: &str| {
+        planned.placement.iter().find(|g| g.facility_id == facility_id && g.signal_id == signal_id).cloned()
+    };
+    for plan in &plans {
+        let Some(group) = group_of(&plan.signal_id) else { continue };
         let missing = (group.first..group.first + group.length)
             .any(|i| !node.is_some_and(|n| n.logic.iter().any(|l| l.index == i)));
         if missing {
+            ctx.signal_id = Some(plan.signal_id.clone());
             ctx.push(
                 CompileIssueCode::ClaimedSlotUnavailable,
                 "The Logic this facility already uses is not available on the chosen Signal LCC.",
             );
         }
     }
-    let occupancy = input
-        .occupancy
-        .iter()
-        .find(|b| signal.protected_block_ids.contains(&b.block_id))
-        .and_then(|b| Some((usable(b.occupied)?, usable(b.clear)?)));
-    if occupancy.is_none() {
-        ctx.push(
-            CompileIssueCode::OccupancyEventsMissing,
-            "The protected block has no occupied and clear event IDs.",
-        );
-    }
-    let aspect_events =
-        mast.and_then(|m| Some((usable(*m.set_aspect_events.first()?)?, usable(*m.set_aspect_events.get(2)?)?)));
-    if mast.is_some() && aspect_events.is_none() {
-        ctx.push(
-            CompileIssueCode::AspectEventsMissing,
-            "The chosen mast's Stop and Clear set-aspect events are not available.",
-        );
-    }
 
     if !out.issues.is_empty() {
         return out;
     }
-    let (Some(mast), Some(group), Some(occupancy), Some(aspect_events)) =
-        (mast, group, occupancy, aspect_events)
-    else {
-        return out;
-    };
-    out.edits = recipe_edits(&signal.name, mast.index, group.first, wiring, occupancy, aspect_events);
-    out.resources = vec![PlannedSignalResources {
-        signal_id: signal.signal_id.clone(),
-        resources: SignalResources {
-            node_key: wiring.node_key.clone(),
-            mast: mast.index,
-            track_circuits: own.map(|r| r.track_circuits.clone()).unwrap_or_default(),
-        },
-    }];
-    out.placement =
-        vec![NodeLogicPlacement { node_key: wiring.node_key.clone(), groups: planned.placement }];
+    let mut kept_logic: Vec<u32> = Vec::new();
+    for plan in &plans {
+        let (Some(mast), Some(group), Some(occupancy)) = (plan.mast, group_of(&plan.signal_id), plan.occupancy(input))
+        else {
+            return CompiledBlockSignals::default();
+        };
+        let Some(events) = plan.aspect_events(node, mast) else { return CompiledBlockSignals::default() };
+        kept_logic.extend(group.first..group.first + group.length);
+        let mut writes = mast_edits(&plan.name, mast, &plan.wiring);
+        match (&plan.next_signal_id, plan.circuit) {
+            (Some(next_id), Some(circuit)) => {
+                let next = signals.iter().find(|s| &s.signal_id == next_id);
+                let link = plans
+                    .iter()
+                    .find(|p| &p.signal_id == next_id)
+                    .and_then(|p| p.mast)
+                    .and_then(|m| link_address_of(node, m));
+                let (Some(link), Some(next), Some(approach)) = (link, next, events.approach) else {
+                    return CompiledBlockSignals::default();
+                };
+                let internal = InternalRecipe {
+                    name: &plan.name,
+                    next_name: &next.name,
+                    first_logic: group.first,
+                    circuit,
+                    link,
+                    occupancy,
+                    stop: events.stop,
+                    approach,
+                    clear: events.clear,
+                };
+                writes.extend(internal_edits(&internal));
+            }
+            _ => writes.extend(terminal_edits(&plan.name, group.first, occupancy, events.stop, events.clear)),
+        }
+        out.edits.extend(writes.into_iter().map(|(path, value)| NodeConfigEdit {
+            node_key: plan.wiring.node_key.clone(),
+            path,
+            value,
+        }));
+        out.resources.push(PlannedSignalResources {
+            signal_id: plan.signal_id.clone(),
+            resources: SignalResources {
+                node_key: plan.wiring.node_key.clone(),
+                mast,
+                track_circuits: plan.circuit.into_iter().collect(),
+            },
+        });
+    }
+    // Vacated Logic and released circuits are reset after the new groups are written.
+    for logic in planned.vacated.iter().filter(|i| !kept_logic.contains(i)) {
+        out.edits.extend(logic_reset_edits(*logic).into_iter().map(|(path, value)| NodeConfigEdit {
+            node_key: board_key.clone(),
+            path,
+            value,
+        }));
+    }
+    for plan in &plans {
+        for circuit in &plan.released_circuits {
+            out.edits.extend(track_circuit_reset_edits(*circuit).into_iter().map(|(path, value)| NodeConfigEdit {
+                node_key: plan.wiring.node_key.clone(),
+                path,
+                value,
+            }));
+        }
+    }
+    out.placement = vec![NodeLogicPlacement { node_key: board_key, groups: planned.placement }];
     out
+}
+
+/// One signal's choices while a Line compiles.
+struct SignalPlan {
+    signal_id: String,
+    name: String,
+    wiring: SignalWiring,
+    protected_block_ids: Vec<String>,
+    mast: Option<u32>,
+    next_signal_id: Option<String>,
+    circuit: Option<u32>,
+    /// Saved Track Circuits this signal no longer needs.
+    released_circuits: Vec<u32>,
+}
+
+impl SignalPlan {
+    fn occupancy(&self, input: &CompileInput) -> Option<([u8; 8], [u8; 8])> {
+        input
+            .occupancy
+            .iter()
+            .find(|b| self.protected_block_ids.contains(&b.block_id))
+            .and_then(|b| Some((usable(b.occupied)?, usable(b.clear)?)))
+    }
+
+    /// The mast's set-aspect events: Stop and Clear always, Approach too when a signal follows.
+    fn aspect_events(&self, node: Option<&NodeSlotFacts>, mast: u32) -> Option<AspectEvents> {
+        let events = &node?.masts.iter().find(|m| m.index == mast)?.set_aspect_events;
+        let at = |i: usize| usable(events.get(i).copied().flatten());
+        let approach = at(1);
+        if self.next_signal_id.is_some() && approach.is_none() {
+            return None;
+        }
+        Some(AspectEvents { stop: at(0)?, approach, clear: at(2)? })
+    }
+}
+
+/// A mast's Stop, Approach and Clear set-aspect events.
+struct AspectEvents {
+    stop: [u8; 8],
+    approach: Option<[u8; 8]>,
+    clear: [u8; 8],
+}
+
+/// The mast's `Link Address` as read from the board, when it is a real event ID.
+fn link_address_of(node: Option<&NodeSlotFacts>, mast: u32) -> Option<[u8; 8]> {
+    usable(node?.masts.iter().find(|m| m.index == mast)?.link_address)
 }
 
 /// Whether two node keys name the same node (dotted and undotted forms alike).
@@ -369,9 +602,6 @@ fn map_placement_issue(issue: &LogicPlacementIssue, outside_logic: usize) -> (Co
         }
         LogicPlacementIssueCode::LogicUnread => {
             (CompileIssueCode::LogicUnread, format!("{}{}", issue.detail, names(&issue.logic)))
-        }
-        LogicPlacementIssueCode::ResizeUnsupported => {
-            (CompileIssueCode::LogicResizeUnsupported, format!("{}{}", issue.detail, names(&issue.logic)))
         }
     }
 }
@@ -423,31 +653,41 @@ fn usable(event: Option<[u8; 8]>) -> Option<[u8; 8]> {
 
 fn check_scope(input: &CompileInput, signals: &[SignalPreview], ctx: &mut IssueSink<'_>) {
     let line = &input.line;
-    if line.blocks.len() != 1 {
-        ctx.push(CompileIssueCode::UnsupportedBlockCount, "This release supports one block with one signal.");
-    }
     if line.movements != Movements::OneDirection {
         ctx.push(CompileIssueCode::UnsupportedMovements, "This release supports one direction only.");
     }
     if line.entrance_end != EntranceEnd::NoPlant || line.exit_end != ExitEnd::NothingBeyond {
         ctx.push(CompileIssueCode::UnsupportedEnds, "This release supports a Line with nothing beyond either end.");
     }
-    let signal_id = signals.first().map(|s| s.signal_id.as_str());
-    let (aspects, lighting) = line
-        .signal_overrides
-        .iter()
-        .find(|o| Some(o.signal_id.as_str()) == signal_id)
-        .map(|o| (o.aspects, o.approach_lighting.clone()))
-        .unwrap_or((line.settings.aspects, line.settings.approach_lighting.clone()));
-    if aspects != 3 {
-        ctx.push(CompileIssueCode::UnsupportedAspects, "This release supports three indications only.");
+    let mut boards: Vec<&str> = Vec::new();
+    for wiring in input.wiring.iter().filter(|w| signals.iter().any(|s| s.signal_id == w.signal_id)) {
+        if !boards.iter().any(|b| same_node(b, &wiring.node_key)) {
+            boards.push(&wiring.node_key);
+        }
     }
-    if lighting != ApproachLighting::AlwaysLit {
-        ctx.push(
-            CompileIssueCode::UnsupportedApproachLighting,
-            "This release supports signals that are always lit only.",
-        );
+    if boards.len() > 1 {
+        ctx.push(CompileIssueCode::UnsupportedBoards, "This release supports signals on one Signal LCC only.");
     }
+    let first = ctx.signal_id.clone();
+    for signal in signals {
+        ctx.signal_id = Some(signal.signal_id.clone());
+        let (aspects, lighting) = line
+            .signal_overrides
+            .iter()
+            .find(|o| o.signal_id == signal.signal_id)
+            .map(|o| (o.aspects, o.approach_lighting.clone()))
+            .unwrap_or((line.settings.aspects, line.settings.approach_lighting.clone()));
+        if aspects != 3 {
+            ctx.push(CompileIssueCode::UnsupportedAspects, "This release supports three indications only.");
+        }
+        if lighting != ApproachLighting::AlwaysLit {
+            ctx.push(
+                CompileIssueCode::UnsupportedApproachLighting,
+                "This release supports signals that are always lit only.",
+            );
+        }
+    }
+    ctx.signal_id = first;
 }
 
 /// Reuse the shared binding check; map its issues to stable codes.
@@ -515,6 +755,21 @@ pub fn logic_function_path(logic: u32) -> String {
     format!("{}/Function", logic_path(logic))
 }
 
+/// Path of a mast's `Link Address` leaf, for callers reading board facts.
+pub fn mast_link_address_path(mast: u32) -> String {
+    format!("{}/Link Address", mast_path(mast))
+}
+
+/// Path of a Logic Variable's `Source` leaf (`variable` is 1 or 2).
+pub fn logic_source_path(logic: u32, variable: u32) -> String {
+    format!("{}/Variable #{variable}/Source", logic_path(logic))
+}
+
+/// Path of a Track Circuit's `Link Address` leaf.
+pub(crate) fn track_circuit_link_path(circuit: u32) -> String {
+    format!("{}/Link Address", track_circuit_path(circuit))
+}
+
 /// Rules the recipe writes on a mast (Stop, Approach, Clear).
 const RECIPE_RULES: u32 = 3;
 /// Appearances per rule, each with one `Lamp Selection`.
@@ -540,14 +795,6 @@ fn clear_event_path(logic: u32) -> String {
     format!("{}/Variable #1/set false", logic_path(logic))
 }
 
-fn stop_action_event_path(logic: u32) -> String {
-    action_event_path(logic, 1)
-}
-
-fn clear_action_event_path(logic: u32) -> String {
-    action_event_path(logic, 2)
-}
-
 /// Every event-ID leaf on a Logic: Variable #1 and #2 set true/false and the
 /// four actions' events. A superset of what the recipe writes.
 fn logic_event_paths(logic: u32) -> Vec<String> {
@@ -567,6 +814,11 @@ const LOGIC_ACTIONS: u32 = 4;
 
 fn action_event_path(logic: u32, action: u32) -> String {
     format!("{}/Action#2[{action}]/Action Event", logic_path(logic))
+}
+
+/// Path of one Track Circuit group (1-based).
+pub(crate) fn track_circuit_path(circuit: u32) -> String {
+    format!("Track Circuits/Circuit[{circuit}]")
 }
 
 fn direct_lamp_path(lamp: u32) -> String {
@@ -608,6 +860,14 @@ fn direct_lamp_reset_edits(lamp: u32) -> Vec<(String, EditValue)> {
     ]
 }
 
+fn track_circuit_reset_edits(circuit: u32) -> Vec<(String, EditValue)> {
+    let c = track_circuit_path(circuit);
+    vec![
+        (format!("{c}/Remote Mast Description"), EditValue::String { value: String::new() }),
+        (format!("{c}/Link Address"), EditValue::FreshEventId),
+    ]
+}
+
 /// A slot to return to its unused state, on one node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseTarget {
@@ -621,6 +881,7 @@ pub enum ReleaseSlot {
     Mast(u32),
     Logic(u32),
     DirectLamp(u32),
+    TrackCircuit(u32),
     /// Only the listed actions' (1-based) `Action Event` fields of a Logic
     /// get fresh event IDs; the Logic otherwise stays as configured.
     LogicActions { index: u32, actions: Vec<u32> },
@@ -631,6 +892,7 @@ impl From<&ClaimedSlot> for ReleaseTarget {
         let slot = match claim.kind {
             ClaimedSlotKind::Mast => ReleaseSlot::Mast(claim.index),
             ClaimedSlotKind::Logic => ReleaseSlot::Logic(claim.index),
+            ClaimedSlotKind::TrackCircuit => ReleaseSlot::TrackCircuit(claim.index),
         };
         Self { node_key: claim.node_key.clone(), slot }
     }
@@ -725,7 +987,9 @@ fn push_target(targets: &mut Vec<ReleaseTarget>, new: ReleaseTarget) {
     let same_slot = |t: &ReleaseTarget| {
         t.node_key == new.node_key
             && match (&t.slot, &new.slot) {
-                (ReleaseSlot::Mast(a), ReleaseSlot::Mast(b)) | (ReleaseSlot::DirectLamp(a), ReleaseSlot::DirectLamp(b)) => a == b,
+                (ReleaseSlot::Mast(a), ReleaseSlot::Mast(b))
+                | (ReleaseSlot::DirectLamp(a), ReleaseSlot::DirectLamp(b))
+                | (ReleaseSlot::TrackCircuit(a), ReleaseSlot::TrackCircuit(b)) => a == b,
                 (a, b) => logic_index(a).is_some() && logic_index(a) == logic_index(b),
             }
     };
@@ -765,6 +1029,7 @@ pub fn release_slots(targets: &[ReleaseTarget], nodes: &[NodeSlotFacts]) -> Comp
             }
             ReleaseSlot::Logic(i) => n.logic.iter().any(|l| l.index == *i).then(|| logic_reset_edits(*i)),
             ReleaseSlot::DirectLamp(i) => n.direct_lamps.contains(i).then(|| direct_lamp_reset_edits(*i)),
+            ReleaseSlot::TrackCircuit(i) => n.track_circuits.iter().any(|c| c.index == *i).then(|| track_circuit_reset_edits(*i)),
             ReleaseSlot::LogicActions { index, actions } => n.logic.iter().any(|l| l.index == *index).then(|| {
                 actions
                     .iter()
@@ -807,34 +1072,58 @@ pub fn merge_release_edits(release: Vec<NodeConfigEdit>, recipe: Vec<NodeConfigE
     merged
 }
 
-fn free_mast(node: &NodeSlotFacts) -> Option<&MastFact> {
-    node.masts.iter().filter(|m| !m.in_use).min_by_key(|m| m.index)
+fn free_mast<'a>(node: &'a NodeSlotFacts, taken: &[u32]) -> Option<&'a MastFact> {
+    node.masts.iter().filter(|m| !m.in_use && !taken.contains(&m.index)).min_by_key(|m| m.index)
 }
 
 /// Mast Processing value Normal, from the Signal-LCC CDI.
 const MAST_NORMAL: i64 = 1;
+/// Logic Function value Group (more Logic follow in the group).
+const LOGIC_GROUP: i64 = 1;
 /// Logic Function value Last (Single).
 const LOGIC_LAST_SINGLE: i64 = 2;
-/// Offset from the group's first Logic of the rung holding the signal's own occupancy.
-const OCCUPANCY_RUNG: u32 = 0;
+/// Logic Action `when false` value Evaluate Next.
+const WHEN_EVALUATE_NEXT: i64 = 4;
+/// Logic Variable `Trigger` value On Variable Change.
+const TRIGGER_ON_CHANGE: i64 = 0;
+/// Logic Variable `Trigger` value On Matching Event.
+const TRIGGER_ON_EVENT: i64 = 1;
+/// Logic Variable `Trigger` value None.
+const TRIGGER_NONE: i64 = 2;
+/// Logic Variable `Source` value: the Variable's own (C) events.
+const SOURCE_OWN_EVENTS: i64 = 0;
+/// Logic Operation value V1 Only.
+const OPERATION_V1_ONLY: i64 = 7;
+/// Logic Action `Condition` value: nothing is sent.
+const SEND_NEVER: i64 = 0;
+/// Logic Action `Condition` value Immediate if True.
+const SEND_IF_TRUE: i64 = 3;
+/// Logic Action `Condition` value Immediate if False.
+const SEND_IF_FALSE: i64 = 4;
 
-fn recipe_edits(
-    name: &str,
-    mast: u32,
-    group_first: u32,
-    wiring: &SignalWiring,
-    (occupied, clear): ([u8; 8], [u8; 8]),
-    (stop_event, clear_event): ([u8; 8], [u8; 8]),
-) -> Vec<NodeConfigEdit> {
-    let mut edits = Vec::new();
-    let node_key = &wiring.node_key;
-    let mut put = |path: String, value: EditValue| {
-        edits.push(NodeConfigEdit { node_key: node_key.clone(), path, value });
-    };
-    let int = |value: i64| EditValue::Int { value };
+type Writes = Vec<(String, EditValue)>;
+
+/// A rung action slot that sends nothing.
+const NO_ACTION: (i64, Option<[u8; 8]>) = (SEND_NEVER, None);
+
+fn int(value: i64) -> EditValue {
+    EditValue::Int { value }
+}
+
+fn event(bytes: [u8; 8]) -> EditValue {
+    EditValue::EventId { bytes }
+}
+
+fn text(value: &str) -> EditValue {
+    EditValue::String { value: value.to_string() }
+}
+
+/// Everything a signal's mast needs: name, three rules' lamps and Processing last.
+fn mast_edits(name: &str, mast: u32, wiring: &SignalWiring) -> Writes {
+    let mut edits = Writes::new();
     let m = mast_path(mast);
-    put(format!("{m}/Mast Description"), EditValue::String { value: name.to_string() });
-    put(format!("{m}/Lamp Fade"), int(0));
+    edits.push((format!("{m}/Mast Description"), text(name)));
+    edits.push((format!("{m}/Lamp Fade"), int(0)));
     let (red, green) = (i64::from(wiring.red_output), i64::from(wiring.green_output));
     // Rule name, Track Speed and lit lamps for Stop, Approach and Clear.
     let rules: [(i64, i64, &[i64]); 3] =
@@ -843,40 +1132,120 @@ fn recipe_edits(
     for (index, (rule_name, speed, lamps)) in rules.iter().enumerate() {
         let rule = index as u32 + 1;
         let r = rule_path(mast, rule);
-        put(format!("{r}/Rule Name"), int(*rule_name));
-        put(format!("{r}/Track Speed"), int(*speed));
+        edits.push((format!("{r}/Rule Name"), int(*rule_name)));
+        edits.push((format!("{r}/Track Speed"), int(*speed)));
         for slot in 0..RECIPE_APPEARANCES {
-            put(
+            edits.push((
                 appearance_lamp_path(mast, rule, slot + 1),
                 int(lamps.get(slot as usize).copied().unwrap_or(0)),
-            );
-            put(format!("{r}/Appearance[{}]/Lamp Phase (A-B) - Flash Rate", slot + 1), int(0));
+            ));
+            edits.push((format!("{r}/Appearance[{}]/Lamp Phase (A-B) - Flash Rate", slot + 1), int(0)));
         }
-        put(format!("{r}/Appearance Effects"), int(0));
-        put(effects_lamp_path(mast, rule), int(0));
+        edits.push((format!("{r}/Appearance Effects"), int(0)));
+        edits.push((effects_lamp_path(mast, rule), int(0)));
     }
-    put(format!("{m}/Mast Processing"), int(MAST_NORMAL));
+    edits.push((format!("{m}/Mast Processing"), int(MAST_NORMAL)));
+    edits
+}
 
-    // The one rung of this release's group: the signal's own occupancy.
-    let logic = group_first + OCCUPANCY_RUNG;
+/// The rung head shared by occupancy rungs: description, own occupancy events.
+fn occupancy_head(logic: u32, name: &str, (occupied, clear): ([u8; 8], [u8; 8])) -> Writes {
     let l = logic_path(logic);
-    put(format!("{l}/Description"), EditValue::String { value: format!("{name} occupancy") });
-    put(format!("{l}/Variable #1/Trigger"), int(1));
-    put(format!("{l}/Variable #1/Source"), int(0));
-    put(occupied_event_path(logic), EditValue::EventId { bytes: occupied });
-    put(clear_event_path(logic), EditValue::EventId { bytes: clear });
-    put(format!("{l}/Logic Operation"), int(7));
-    put(format!("{l}/Variable #2/Trigger"), int(2));
-    put(format!("{l}/Action#1/when true"), int(0));
-    put(format!("{l}/Action#1/when false"), int(0));
-    put(format!("{l}/Time Delay before action/Delay Time (1-60000)"), int(0));
-    put(format!("{l}/Time Delay before action/Units"), int(0));
-    put(format!("{l}/Action#2[1]/Condition"), int(3));
-    put(stop_action_event_path(logic), EditValue::EventId { bytes: stop_event });
-    put(format!("{l}/Action#2[2]/Condition"), int(4));
-    put(clear_action_event_path(logic), EditValue::EventId { bytes: clear_event });
-    put(format!("{l}/Action#2[3]/Condition"), int(0));
-    put(format!("{l}/Action#2[4]/Condition"), int(0));
-    put(format!("{l}/Function"), int(LOGIC_LAST_SINGLE));
+    vec![
+        (format!("{l}/Description"), text(&format!("{name} occupancy"))),
+        (format!("{l}/Variable #1/Trigger"), int(TRIGGER_ON_EVENT)),
+        (format!("{l}/Variable #1/Source"), int(SOURCE_OWN_EVENTS)),
+        (occupied_event_path(logic), event(occupied)),
+        (clear_event_path(logic), event(clear)),
+        (format!("{l}/Logic Operation"), int(OPERATION_V1_ONLY)),
+        (format!("{l}/Variable #2/Trigger"), int(TRIGGER_NONE)),
+    ]
+}
+
+/// What happens after a rung's variables: Action #1, the delay, the four
+/// event actions (`Condition`, event) and the Function, written last.
+fn rung_tail(logic: u32, when_false: i64, actions: [(i64, Option<[u8; 8]>); 4], function: i64) -> Writes {
+    let l = logic_path(logic);
+    let mut edits = vec![
+        (format!("{l}/Action#1/when true"), int(0)),
+        (format!("{l}/Action#1/when false"), int(when_false)),
+        (format!("{l}/Time Delay before action/Delay Time (1-60000)"), int(0)),
+        (format!("{l}/Time Delay before action/Units"), int(0)),
+    ];
+    for (n, (condition, action_event)) in actions.into_iter().enumerate() {
+        let action = n as u32 + 1;
+        edits.push((format!("{l}/Action#2[{action}]/Condition"), int(condition)));
+        if let Some(bytes) = action_event {
+            edits.push((action_event_path(logic, action), event(bytes)));
+        }
+    }
+    edits.push((logic_function_path(logic), int(function)));
+    edits
+}
+
+/// A `Last (Single)` rung's tail: its first action sends `if_true` when the
+/// rung's condition holds, its second sends `if_false` when it does not.
+fn set_aspect_rung_tail(logic: u32, if_true: [u8; 8], if_false: [u8; 8]) -> Writes {
+    rung_tail(
+        logic,
+        0,
+        [(SEND_IF_TRUE, Some(if_true)), (SEND_IF_FALSE, Some(if_false)), NO_ACTION, NO_ACTION],
+        LOGIC_LAST_SINGLE,
+    )
+}
+
+/// The last signal's one rung: its own occupancy sets Stop, clear sets Clear.
+fn terminal_edits(
+    name: &str,
+    logic: u32,
+    occupancy: ([u8; 8], [u8; 8]),
+    stop: [u8; 8],
+    clear: [u8; 8],
+) -> Writes {
+    let mut edits = occupancy_head(logic, name, occupancy);
+    edits.extend(set_aspect_rung_tail(logic, stop, clear));
+    edits
+}
+
+/// What a signal with a signal after it needs beyond its mast.
+struct InternalRecipe<'a> {
+    name: &'a str,
+    next_name: &'a str,
+    first_logic: u32,
+    circuit: u32,
+    link: [u8; 8],
+    occupancy: ([u8; 8], [u8; 8]),
+    stop: [u8; 8],
+    approach: [u8; 8],
+    clear: [u8; 8],
+}
+
+/// The Track Circuit bound to the next signal, then the two-rung group. The
+/// `Last (Single)` rung is written before the `Group` rung, so a `Group` is
+/// never on the board without its terminator.
+fn internal_edits(recipe: &InternalRecipe<'_>) -> Writes {
+    let c = track_circuit_path(recipe.circuit);
+    let mut edits = vec![
+        (format!("{c}/Remote Mast Description"), text(recipe.next_name)),
+        (format!("{c}/Link Address"), event(recipe.link)),
+    ];
+    let next_rung = recipe.first_logic + 1;
+    let l = logic_path(next_rung);
+    edits.extend([
+        (format!("{l}/Description"), text(&format!("{} next signal", recipe.name))),
+        (format!("{l}/Variable #1/Trigger"), int(TRIGGER_ON_CHANGE)),
+        (format!("{l}/Variable #1/Source"), int(i64::from(recipe.circuit))),
+        (format!("{l}/Variable #1/Track Speed"), int(0)),
+        (format!("{l}/Logic Operation"), int(OPERATION_V1_ONLY)),
+        (format!("{l}/Variable #2/Trigger"), int(TRIGGER_NONE)),
+    ]);
+    edits.extend(set_aspect_rung_tail(next_rung, recipe.approach, recipe.clear));
+    edits.extend(occupancy_head(recipe.first_logic, recipe.name, recipe.occupancy));
+    edits.extend(rung_tail(
+        recipe.first_logic,
+        WHEN_EVALUATE_NEXT,
+        [(SEND_IF_TRUE, Some(recipe.stop)), NO_ACTION, NO_ACTION, NO_ACTION],
+        LOGIC_GROUP,
+    ));
     edits
 }

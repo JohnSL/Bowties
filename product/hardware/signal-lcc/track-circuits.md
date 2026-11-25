@@ -84,6 +84,10 @@ If item 3 is missing, the `Track Speed` fields are wrong.
 
 With 8 receivers per node, circuit exhaustion is a real constraint on dense interlockings, and a good candidate for a Bowties capacity indicator.
 
+## How Bowties Uses Track Circuits
+
+Automatic Block Signals (Spec 020 E3) gives each signal that has a signal after it one Track Circuit on its own board. The core compiler (`bowties-core/src/signaling/compiler.rs`) writes the circuit's Remote Mast Description (the next signal's name) and Link Address (the next signal's mast Link Address as last read from the board into the layout), and the signal's `Last (Single)` rung reads it with `Track Speed = Stop`. Bowties treats a circuit as free when no facility claims it and no Logic Bowties does not own uses it as a Source; a saved signal keeps its circuit number. Releasing a circuit empties the Remote Mast Description and gives the Link Address a fresh event ID. A next mast whose Link Address has not been read blocks Done. See [ADR-0020](../../architecture/adr/0020-board-logic-placement.md).
+
 ## "Next Mast" Means Same Direction
 
 The most common modelling error is treating a mast facing the opposite direction as "next". Mark Granville, [#9297](https://groups.io/g/layoutcommandcontrol/message/9297):

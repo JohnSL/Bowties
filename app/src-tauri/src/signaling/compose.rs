@@ -14,7 +14,7 @@ use bowties_core::{
     signaling::{
         compiler::{
             compile_block_signals, merge_release_edits, release_slots, BlockOccupancyEvents, CompileInput,
-            CompileIssue, EditValue, PlannedSignalResources, ReleaseTarget, SignalWiring,
+            CompileIssue, PlannedSignalResources, ReleaseTarget, SignalWiring,
         },
         slots::{
             claimed_slots_from_facilities, facility_claimed_slots, node_slot_facts, resolve_edits, LeafPathIndex,
@@ -151,10 +151,6 @@ fn compose_from_layout(
         saved_resources,
         logic_placement: layout.effective_facilities().logic_placement.clone(),
     });
-    // Only a release asks the frontend for fresh event IDs; a recipe never does.
-    if compiled.edits.iter().any(|e| e.value == EditValue::FreshEventId) {
-        return Err("The compiled recipe contains an unresolved fresh event ID.".to_string());
-    }
     let mut issues = facts.release_issues.clone();
     issues.extend(compiled.issues);
     let (merged, signal_resources, logic_placement) = if issues.is_empty() {

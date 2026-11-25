@@ -265,11 +265,12 @@ export type ComposeIssueCode =
   | 'logicUndefinedFunction'
   | 'logicUnterminatedGroup'
   | 'logicUnread'
-  | 'logicResizeUnsupported'
   | 'releaseInvalid'
   | 'occupancyEventsMissing'
   | 'aspectEventsMissing'
-  | 'unsupportedBlockCount'
+  | 'unsupportedBoards'
+  | 'noFreeTrackCircuit'
+  | 'linkAddressMissing'
   | 'unsupportedMovements'
   | 'unsupportedEnds'
   | 'unsupportedAspects'
@@ -288,7 +289,7 @@ export interface ComposeIssue {
 /**
  * With any issue, `edits`, `signalResources` and `logicPlacement` are empty.
  * `logicPlacement` is the wiring board's whole new placement. Edits from
- * released owners may carry `freshEventId`; the recipe's never do.
+ * released owners, vacated Logic and released Track Circuits may carry `freshEventId`.
  */
 export interface ComposeBlockSignalsResponse {
   edits: RemovalEdit[];

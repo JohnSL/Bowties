@@ -44,19 +44,32 @@ describe('issueText Logic placement issues', () => {
     );
   });
 
-  it('words a group with no end, an unread Logic and a move this release cannot make', () => {
+  it('words a group with no end, and an unread Logic', () => {
     expect(issueText(logicIssue('logicUnterminatedGroup', [4, 5]), OUTPUTS)).toBe(
       'Logic 4 and 5 start a group that never ends with a Last (Single) Logic. Fix it on the board, or release it, before Bowties places signals here.',
     );
     expect(issueText(logicIssue('logicUnread', [2]), OUTPUTS)).toBe(
       'Logic 2 could not be read from this board. Check that the node is online, then try again.',
     );
-    expect(issueText(logicIssue('logicResizeUnsupported', [6]), OUTPUTS)).toBe(
-      'Bowties would have to move Logic 6 to make room on this board, which this release cannot do. Choose another Signal LCC.',
-    );
   });
 
   it('falls back to the backend detail when the issue names no Logic', () => {
     expect(issueText(logicIssue('logicUnread'), OUTPUTS)).toBe('backend detail');
+  });
+});
+
+describe('issueText two-block issues', () => {
+  const issue = (code: ComposeIssue['code'], detail = 'backend detail'): ComposeIssue => ({
+    code, signalId: 'sig-1', nodeKey: 'N', detail,
+  });
+
+  it('words signals on more than one board and a board with no free Track Circuit', () => {
+    expect(issueText(issue('unsupportedBoards'), OUTPUTS)).toBe('This release builds signals on one Signal LCC only. Choose the same Signal LCC for every signal.');
+    expect(issueText(issue('noFreeTrackCircuit'), OUTPUTS)).toBe('This Signal LCC has no free Track Circuit left for these signals. Choose another Signal LCC.');
+  });
+
+  it('keeps the backend detail for an unread Link Address, which names the next signal', () => {
+    const detail = "The Link Address of Next signal's mast has not been read from the board.";
+    expect(issueText(issue('linkAddressMissing', detail), OUTPUTS)).toBe(detail);
   });
 });

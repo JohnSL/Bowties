@@ -265,3 +265,93 @@ describe('Release a pin used outside Bowties (E2c-T1)', () => {
     expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 0, configNodes: 0 });
   });
 });
+
+describe('Add a second block to a saved facility (E3-T1)', () => {
+  const FIRST_SIGNAL_ID = `signal:${SAVED_FACILITY_ID}:block:cedar:eastward`;
+  const SECOND_SIGNAL_ID = `signal:${SAVED_FACILITY_ID}:block:mill:eastward`;
+  const LINK_ADDRESS_EDIT = {
+    nodeKey: SIGNAL_NODE,
+    space: 253,
+    address: 400,
+    path: 'Track Circuits/Circuit[1]/Link Address',
+    value: { type: 'eventId', bytes: [2, 1, 87, 0, 0, 1, 0, 2], hex: '0201570000010002' },
+  };
+
+  beforeEach(async () => {
+    channelsStore.reset();
+    facilitiesStore.reset();
+    behaviorTemplatesStore.reset();
+    configChangesStore.clearAllDrafts();
+    cancelBlockSignalsEditor();
+    invoke.mockReset();
+    seedSavedBlockSignals();
+    // Compose plans what the backend does for two blocks on one board: the first signal keeps mast 1
+    // and gains Track Circuit 1 (a two-Logic group), the new signal takes mast 2 and one Logic.
+    mockIpc(invoke, {
+      ...signalIpc(),
+      compose_block_signals: (args: unknown) => {
+        const request = (args as { request: ComposeBlockSignalsRequest }).request;
+        return {
+          edits: [
+            { nodeKey: SIGNAL_NODE, space: 253, address: 100, path: 'mast#1', value: { type: 'int', value: 3 } },
+            LINK_ADDRESS_EDIT,
+          ],
+          signalResources: [
+            { signalId: FIRST_SIGNAL_ID, resources: { nodeKey: SIGNAL_NODE, mast: 1, trackCircuits: [1] } },
+            { signalId: SECOND_SIGNAL_ID, resources: { nodeKey: SIGNAL_NODE, mast: 2, trackCircuits: [] } },
+          ],
+          logicPlacement: [{
+            nodeKey: SIGNAL_NODE,
+            groups: [
+              { facilityId: request.facilityId, signalId: FIRST_SIGNAL_ID, first: 1, length: 2 },
+              { facilityId: request.facilityId, signalId: SECOND_SIGNAL_ID, first: 3, length: 1 },
+            ],
+          }],
+          issues: [],
+        };
+      },
+    });
+    await renderRailroadPanel();
+    render(SaveControls, { props: { toolbar: true } });
+  });
+
+  it('keeps the first signal, stages the Track Circuit edit on Done, and shows unsaved changes', { timeout: 20000 }, async () => {
+    await fireEvent.click(within(screen.getByTestId('facility-card')).getByRole('button', { name: 'Edit facility' }));
+    const editor = await screen.findByRole('dialog', { name: /edit automatic block signals/i });
+    await addBlock('Mill curve');
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
+    await fireEvent.click(await within(editor).findByRole('button', { name: 'Next: Appearance' }));
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Wiring' }));
+
+    // wire the new signal on the same board
+    await fireEvent.click(await within(editor).findByRole('button', { name: /Configure Mill curve East/ }));
+    await chooseWiringNode(editor);
+    const grid = await within(editor).findByRole('group', { name: 'Pins on 02.01.57.00.00.01' });
+    await fireEvent.click(within(grid).getByRole('button', { name: /#2 H2-R/ }));
+    await fireEvent.click(within(editor).getByRole('button', { name: /Green lamp/ }));
+    await fireEvent.click(within(grid).getByRole('button', { name: /#4 H2-G/ }));
+    const done = within(editor).getByRole('button', { name: 'Done' });
+    await waitFor(() => expect(done).toBeEnabled());
+    await fireEvent.click(done);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /automatic block signals/i })).not.toBeInTheDocument());
+
+    // both signals are on the facility; the first keeps its id, name, channel and outputs
+    const record = facilitiesStore.facilities.find((f) => f.facilityId === SAVED_FACILITY_ID)!.blockSignals!;
+    expect(record.signals.map((s) => s.signalId)).toEqual([FIRST_SIGNAL_ID, SECOND_SIGNAL_ID]);
+    expect(record.signals[0]).toMatchObject({ name: 'Cedar Hill East', channelId: SAVED_SIGNAL_CHANNEL_ID });
+    expect(record.signals[0].resources).toEqual({ nodeKey: SIGNAL_NODE, mast: 1, trackCircuits: [1] });
+    expect(record.signals[1].resources).toEqual({ nodeKey: SIGNAL_NODE, mast: 2, trackCircuits: [] });
+    expect(channelsStore.channels.find((c) => c.id === SAVED_SIGNAL_CHANNEL_ID)?.binding).toMatchObject({
+      greenOutput: 1,
+      redOutput: 3,
+    });
+    expect(facilitiesStore.logicPlacement[0].groups.map((g) => [g.signalId, g.first, g.length])).toEqual([
+      [FIRST_SIGNAL_ID, 1, 2],
+      [SECOND_SIGNAL_ID, 3, 1],
+    ]);
+
+    // the Track Circuit edit rides the save path as an unsaved change
+    await screen.findByRole('group', { name: 'Configuration save controls' });
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 2, configNodes: 1 });
+  });
+});

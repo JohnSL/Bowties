@@ -2,14 +2,14 @@ import type { Facility, NodeLogicPlacement } from '$lib/api/facilities';
 
 /** A board slot a facility occupies, for display. `index` is the 1-based number on the board. */
 export interface BoardSlot {
-  kind: 'mast' | 'logic';
+  kind: 'mast' | 'logic' | 'trackCircuit';
   index: number;
 }
 
 /**
- * The board an Automatic Block Signals facility runs on and the masts and
- * Logic it occupies: each signal's mast from its resources, each Logic of the
- * facility's groups from the board placement. Pure derivation; ownership of
+ * The board an Automatic Block Signals facility runs on and the masts,
+ * Logic and Track Circuits it occupies: each signal's mast and circuits from
+ * its resources, each Logic of the facility's groups from the board placement. Pure derivation; ownership of
  * both sources stays with the facilities store.
  */
 export function facilityBoardSlots(
@@ -25,6 +25,9 @@ export function facilityBoardSlots(
       if (group.facilityId !== facility.facilityId) continue;
       for (let offset = 0; offset < group.length; offset++) slots.push({ kind: 'logic', index: group.first + offset });
     }
+  }
+  for (const signal of signals) {
+    for (const index of signal.resources.trackCircuits) slots.push({ kind: 'trackCircuit', index });
   }
   return { nodeKey, slots };
 }

@@ -3,8 +3,10 @@ import type { ComposeIssue, ComposeIssueCode, SignalOutputHost } from '$lib/api/
 
 /** Issues worded from the Logic numbers they name, so they are not in `ISSUE_TEXT`. */
 type LogicIssueCode = Extract<ComposeIssueCode, `logic${string}`>;
+/** Issues whose backend detail names the signal involved, so it is shown as is. */
+type DetailIssueCode = 'linkAddressMissing';
 
-const ISSUE_TEXT: Record<Exclude<ComposeIssueCode, LogicIssueCode>, string> = {
+const ISSUE_TEXT: Record<Exclude<ComposeIssueCode, LogicIssueCode | DetailIssueCode>, string> = {
   wiringMissing: 'Choose a Signal LCC and a red and a green pin for this signal.',
   bindingInvalid: 'The chosen pins cannot drive this signal. Choose different pins.',
   hardwareUnavailable: 'The Signal LCC settings could not be read. Check that the node is online.',
@@ -18,7 +20,8 @@ const ISSUE_TEXT: Record<Exclude<ComposeIssueCode, LogicIssueCode>, string> = {
     'The mast and logic this signal already uses are no longer available on this Signal LCC. Choose the original Signal LCC.',
   occupancyEventsMissing: 'Occupancy events are missing for a protected block. Set up its detector first.',
   aspectEventsMissing: 'The aspect events for this signal are missing on the Signal LCC.',
-  unsupportedBlockCount: 'This release cannot build signals for this number of blocks.',
+  unsupportedBoards: 'This release builds signals on one Signal LCC only. Choose the same Signal LCC for every signal.',
+  noFreeTrackCircuit: 'This Signal LCC has no free Track Circuit left for these signals. Choose another Signal LCC.',
   unsupportedMovements: 'This release builds signals for one direction only.',
   unsupportedEnds: 'This release does not build signals for these track ends.',
   unsupportedAspects: 'This release builds three-aspect signals only.',
@@ -58,8 +61,6 @@ function logicIssueText(issue: ComposeIssue & { code: LogicIssueCode }): string 
       return `${names} ${many ? 'start' : 'starts'} a group that never ends with a Last (Single) Logic. ${FIX_OR_RELEASE}`;
     case 'logicUnread':
       return `${names} could not be read from this board. Check that the node is online, then try again.`;
-    case 'logicResizeUnsupported':
-      return `Bowties would have to move ${names} to make room on this board, which this release cannot do. Choose another Signal LCC.`;
   }
 }
 

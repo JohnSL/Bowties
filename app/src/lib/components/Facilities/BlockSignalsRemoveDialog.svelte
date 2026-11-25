@@ -21,7 +21,7 @@
   }: {
     facilityName: string;
     boardName: string;
-    /** The masts and Logic the facility occupies on the board. */
+    /** The masts, Logic and Track Circuits the facility occupies on the board. */
     slots: readonly BoardSlot[];
     /** Why the board could not be reset; offers removal without resetting it. */
     reason?: string;
@@ -32,9 +32,12 @@
     onCancel: () => void;
   } = $props();
 
+  const SLOT_LABELS = { mast: 'Mast', logic: 'Logic', trackCircuit: 'Track Circuit' } as const;
+  const SLOT_ORDER = ['mast', 'logic', 'trackCircuit'] as const;
+
   const slotsText = $derived.by(() => {
     const labels = slots
-      .map((slot) => ({ order: slot.kind === 'mast' ? 0 : 1, index: slot.index, text: `${slot.kind === 'mast' ? 'Mast' : 'Logic'} ${slot.index}` }))
+      .map((slot) => ({ order: SLOT_ORDER.indexOf(slot.kind), index: slot.index, text: `${SLOT_LABELS[slot.kind]} ${slot.index}` }))
       .sort((a, b) => a.order - b.order || a.index - b.index)
       .map((slot) => slot.text);
     const unique = [...new Set(labels)];

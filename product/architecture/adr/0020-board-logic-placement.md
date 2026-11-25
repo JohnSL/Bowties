@@ -71,6 +71,19 @@ board-wide rule.
 - Facilities schema "2.0" exists only on the Spec 020 branch, so the record
   changed in place without a migration.
 
+## 2026-11-24 extension: groups change length (Spec 020 E3)
+
+- A facility's recorded group whose demanded length changes is resized by
+  `plan_logic_placement`: it grows in place when the following Logic is free,
+  otherwise only that facility's own group moves to the lowest free run (its
+  old slots count as free); a shrink keeps the first slot. Another facility's
+  group is never moved. No run that fits is `NoFreeLogic` for the signal.
+- `PlannedLogic.vacated` lists the Logic the facility held before and no
+  longer holds; the compiler releases them after the new group's edits.
+- A Track Circuit is free when no facility claims it and no Logic Bowties
+  does not own uses it as a Source; a release empties Remote Mast Description
+  and gives the Link Address a fresh event ID.
+
 ## Invariants
 
 - Every Logic slot Bowties writes for a facility comes from

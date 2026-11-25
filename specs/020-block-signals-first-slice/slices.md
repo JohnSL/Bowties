@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 10/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
+Status: 11/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -131,7 +131,7 @@ flowchart LR
 | E2b | Remove a facility | HITL | E2a | done |
 | E2c | Release pins used outside Bowties | HITL | E2b | done |
 | E3a | Board Logic planner | AFK | E3b-1 | done |
-| E3 | Two blocks on one board | HITL | E3a + same-board Approach evidence (passed) + E3 bench gate | sketched |
+| E3 | Two blocks on one board | HITL | E3a + same-board Approach evidence (passed) | done |
 | E3r | Review step | HITL | E3 | sketched |
 | E3b-0 | One owner and one writer for Pending Changes | REFACTOR | E2c | done |
 | E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | done |
@@ -943,7 +943,7 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 - **Link Address (D1 D)**: the receiver's Track Circuit takes the publisher mast's Link Address from the layout. The field is read-only in the profile, so its only source is a read of the board; the bench failure (`...04.68`) came from an edited value, which that lock now prevents. E4 checks the publisher's Link Address too. Rejected for now: a read at Done (loses offline Done for lines with two or more blocks; adds an observation layer).
 - **Scope (D5)**: any number of blocks with every signal on one board; a line across boards is a scoped issue (E5). Three-block maintenance stays in E6.
 - **Review (D4)**: moved to its own slice, E3r. Done stays on Wiring in E3a and E3.
-- **Bench gate before E3's recipe values are fixed**: on the existing bench (Mast 1 receiver, Mast 2 publisher), put Mast 1's own occupancy as a `Group` in Logic 7 and the Track Circuit rung as `Last (Single)` in Logic 8, then check: the four occupancy combinations; a Track Circuit change while the own block is occupied stays Stop; the aspect right after writing, before any detector changes; a factory-reset Track Circuit's Link Address (decides when a circuit is free and what release writes); a `Blocked` Logic ends a group; the Signal LCC acts on Logic writes only after Update Complete. Also confirm the writer writes a board's rows in recorded order (code check).
+- **No separate bench gate (2026-11-24, user)**: E3 is built directly; what the gate would have measured can change only recipe values, not its structure, so those checks are part of E3's bench acceptance. Defaults until the bench says otherwise: a Track Circuit is free when no facility claims it and no Logic uses it as a Source; a released circuit gets an empty Remote Mast Description and a fresh Link Address; `Blocked` ends a group.
 
 ### E3a: Board Logic planner [AFK]
 
@@ -984,18 +984,42 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 
 **Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block.
 **Boundary**: Editor → compiler (internal-signal recipe, Track Circuit, planner moves) → drafts → Save → Signal LCC.
-**Blocked by**: E3a + same-board Approach evidence (passed) + the E3 bench gate above.
-**Status**: sketched
+**Blocked by**: E3a + same-board Approach evidence (passed).
+**Status**: done
+**Complexity**: large
 
 **Acceptance criteria**:
-- [ ] Adding a block keeps the first signal's identity, name, protected block and outputs; the new signal protects only its own block.
-- [ ] An internal signal gets a two-rung group (own occupancy, then the Track Circuit) and a Track Circuit bound to the next signal's mast Link Address from the layout; the terminal recipe is unchanged.
-- [ ] All four two-block occupancy combinations match the policy on the bench: own block occupied gives Stop (red); clear with the next block occupied gives Approach (red and green together); both clear gives Clear (green).
-- [ ] When the group cannot grow in place, the planner moves the fewest slots (our own group first) in a safe write order; a needed slot or circuit that cannot be found blocks Done with a scoped issue; nothing is overwritten.
-- [ ] A line whose signals are on more than one board is a scoped issue (E5).
-- [ ] The change shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
+- [x] Adding a block keeps the first signal's identity, name, protected block and outputs; the new signal protects only its own block.
+- [x] An internal signal gets a two-rung group (own occupancy, then the Track Circuit) and a Track Circuit bound to the next signal's mast Link Address from the layout; the terminal recipe is unchanged.
+- [x] All four two-block occupancy combinations match the policy on the bench: own block occupied gives Stop (red); clear with the next block occupied gives Approach (red and green together); both clear gives Clear (green). Also on the bench: changing the next block while the first is occupied keeps the first signal at Stop; note the aspect right after Save, before any detector changes.
+- [x] A saved signal's group grows in place when the next Logic is free; otherwise only that signal's own group moves to the lowest free run (another facility's group is never moved in E3). A signal that stops having a signal after it shrinks back to one Logic and releases its Track Circuit. Write order never leaves a `Group` without its terminator: the `Last (Single)` rung is written before the `Group` rung, and vacated Logic is released after the new group is written.
+- [x] A needed Logic run or Track Circuit that cannot be found, or a next mast whose Link Address has not been read, blocks Done with an issue naming the signal; nothing is overwritten.
+- [x] Removing the facility releases its Track Circuits too, and the Remove dialog lists them.
+- [x] A line whose signals are on more than one board is a scoped issue (E5).
+- [x] The change shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
 
 **Architecture note**: Adds the internal-signal recipe and a Track Circuit derived from block order (no separately stored link graph), and planner moves for two-rung groups.
+
+**Recipe (internal signal)**: rung 1 `Group`: own occupancy (as the terminal rung), true sends Stop then exits (Action 1 Immediate if True), false evaluates next. Rung 2 `Last (Single)`: Variable #1 Trigger On Variable Change, Source Track Circuit N, Track Speed Stop, V1 Only; true sends Approach (Rule 2's set aspect), false sends Clear. Track Circuit N: Remote Mast Description = next signal's name, Link Address = next signal's mast Link Address from the layout.
+
+**Tasks**:
+- [x] E3-T1: Integration tests first. Core: a two-block Line wired to one board compiles to the terminal recipe for the last signal and the two-rung recipe plus a Track Circuit for the first, with resources (mast and circuit) and placement. RailroadPanel: adding a second block to a saved one-block facility and wiring the new signal on the same board enables Done, stages the Track Circuit edit, and the first signal keeps its name and outputs.
+- [x] E3-T2: Facts (`slots.rs`, `compiler.rs` types). `MastFact.link_address`; `LogicFact.sources` (Variable #1/#2 Source); `NodeSlotFacts.track_circuits` (index, claimed, in use when claimed or used as a Source by Logic Bowties does not own). `ClaimedSlotKind::TrackCircuit` from resources.
+- [x] E3-T3: Planner resize (`logic_placement.rs`). Grow in place when the next Logic is free; else move the signal's own group to the lowest free run (its old slots count as free); shrink keeps the first slot. Return the vacated Logic. `ResizeUnsupported` goes away.
+- [x] E3-T4: Compiler multi-signal. Scope: any number of blocks, one board (`UnsupportedBoards` when wiring names two boards); masts per signal (saved keep theirs; new ones take the lowest free, distinct); the internal recipe, Track Circuit pick (saved keep theirs; new ones lowest free); new issues `NoFreeTrackCircuit`, `LinkAddressMissing`; edit order (rung 2 before rung 1, vacated Logic and released circuits after the recipe).
+- [x] E3-T5: Release. Removal and shrink release Track Circuits (Remote Mast Description empty, fresh Link Address) through `release_slots`; `facility_claimed_slots` includes circuits; backend compose removal path.
+- [x] E3-T6: Frontend. Wording for the new issue codes (`wiringText.ts`), the Remove dialog lists Track Circuits, `api/signaling.ts` codes; staging already carries resources and placement.
+- [x] E3-T7: Docs. ADR-0020 dated extension (resize and move rules, write order, circuit rules); `product/hardware/signal-lcc/track-circuits.md` (Bowties' circuit rules); `aiwiki/owners.md`, seams entry.
+- [x] E3-T8: Validate. `cargo test` in `bowties-core`, `cargo check --tests` in `app/src-tauri`, `npx vitest run`, svelte-check (baseline 113). Then the bench run.
+
+**Validation (2026-11-24, automated)**:
+- `cargo test` in `bowties-core`: 623 passed, 0 failed, 0 warnings (was 602). New: facts (mast Link Address, Logic sources, Track Circuits claimed/in use); planner grow in place, move, shrink, vacated, no room naming the signal; compiler two-block recipe (terminal last signal unchanged; internal two-rung group and Track Circuit; write order), one board only, lowest free mast per signal, circuit kept/lowest free, no free circuit, unread Link Address, moved group's old Logic reset last, shrink releases Logic and circuit after the recipe; removal resets masts, Logic and circuits.
+- `app/src-tauri`: `cargo check --tests` clean. The compose guard that refused any fresh event ID is gone: vacated Logic and released circuits need them, and `stageComposedEdits` already fills them.
+- `npx vitest run`: 1681 passed, 125 files (was 1676). New: second block on a saved facility (RailroadPanel edit integration; it passed first run, the editor already allowed several blocks), Remove dialog and `facilityBoardSlots` list Track Circuits, wording for `unsupportedBoards` and `noFreeTrackCircuit` (`linkAddressMissing` shows the backend detail, which names the next signal). svelte-check: 113, the baseline.
+- Planner issues now carry the signal they are about (`LogicPlacementIssue.signal_id`).
+- Refactor pass: named constants for the CDI enum values in the rung writers, one shared set-aspect rung tail, CDI path helpers owned by `compiler.rs` (used by `slots.rs`).
+- Docs: ADR-0020 2026-11-24 extension, `product/hardware/signal-lcc/track-circuits.md` ("How Bowties Uses Track Circuits"), `aiwiki/owners.md`, `aiwiki/seams.md`.
+- Bench: passed (2026-11-24, user): adding the second block to the saved one-block facility kept the first signal, which now shows Stop, Approach and Clear; both signals follow the occupancy policy. Seen on the bench: the Wiring and Aspects diagrams show block occupancy dots, not signal aspects, so a clear first block reads green while its signal shows Approach (see E3r / E4 for showing expected or observed aspects).
 
 ### E3r: Review step [HITL]
 

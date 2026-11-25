@@ -83,12 +83,13 @@ pub struct SignalResources {
     pub track_circuits: Vec<u32>,
 }
 
-/// Kind of node-owned slot a facility occupies. Not persisted: a flat view
+/// Kind of node-owned slot a facility occupies (mast, Logic or Track Circuit). Not persisted: a flat view
 /// derived from signal resources and Logic placement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClaimedSlotKind {
     Mast,
     Logic,
+    TrackCircuit,
 }
 
 /// A node slot (mast or Logic) occupied by a facility; derived, never stored.

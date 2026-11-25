@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::compiler::{
-    logic_function_path, mast_processing_path, EditValue, LogicAction, LogicFact, MastFact, NodeConfigEdit,
-    NodeSlotFacts,
+    logic_function_path, logic_source_path, mast_link_address_path, mast_processing_path, track_circuit_link_path,
+    EditValue, LogicAction, LogicFact, MastFact, NodeConfigEdit, NodeSlotFacts, TrackCircuitFact,
 };
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind, FacilitiesDocument};
 use crate::node_tree::{
@@ -196,10 +196,11 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
                 in_use: nonzero(&mast_processing_path(i)) || is_claimed(ClaimedSlotKind::Mast, i),
                 claimed: is_claimed(ClaimedSlotKind::Mast, i),
                 set_aspect_events: (1..).take_while(|r| index.leaf(&rule_path(*r)).is_some()).map(event).collect(),
+                link_address: event_value(&index, &mast_link_address_path(i)),
             }
         })
         .collect();
-    let logic = (1..)
+    let logic: Vec<LogicFact> = (1..)
         .take_while(|i| index.leaf(&logic_function_path(*i)).is_some())
         .map(|i| LogicFact {
             index: i,
@@ -220,12 +221,38 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
                     LogicAction { condition, event: event_value(&index, &format!("{base}/Action Event")) }
                 })
                 .collect(),
+            sources: [1, 2]
+                .iter()
+                .filter_map(|v| match index.leaf(&logic_source_path(i, *v)) {
+                    Some(LeafNode { value: Some(ConfigValue::Int { value }), .. }) => Some(*value),
+                    _ => None,
+                })
+                .collect(),
         })
         .collect();
     let direct_lamps = (1..)
         .take_while(|i| index.leaf(&format!("Direct Lamp Control/Lamp[{i}]/Lamp Selection")).is_some())
         .collect();
-    NodeSlotFacts { node_key: node_key.to_string(), masts, logic, direct_lamps }
+    // A circuit is in use when claimed, or when active Logic Bowties does not own
+    // reads it as a Source (Source 1..=8 name Track Circuits 1..=8).
+    let used_by_outside_logic = |circuit: u32| {
+        logic.iter().any(|l: &LogicFact| {
+            !l.claimed && l.function != Some(0) && l.sources.iter().any(|s| *s == i64::from(circuit))
+        })
+    };
+    let track_circuits = (1..)
+        .take_while(|i| index.leaf(&track_circuit_link_path(*i)).is_some())
+        .map(|i| {
+            let claimed = is_claimed(ClaimedSlotKind::TrackCircuit, i);
+            TrackCircuitFact {
+                index: i,
+                in_use: claimed || used_by_outside_logic(i),
+                claimed,
+                link_address: event_value(&index, &track_circuit_link_path(i)),
+            }
+        })
+        .collect();
+    NodeSlotFacts { node_key: node_key.to_string(), masts, logic, direct_lamps, track_circuits }
 }
 
 /// Slots occupied by Automatic Block Signals facilities, excluding the facility
@@ -268,7 +295,20 @@ fn claimed_slots_where(doc: &FacilitiesDocument, include: impl Fn(&str) -> bool)
                 index,
             })
     });
-    masts.chain(logic).collect()
+    let circuits = doc
+        .facilities
+        .iter()
+        .filter(|f| include(&f.facility_id))
+        .filter_map(|f| f.block_signals.as_ref())
+        .flat_map(|record| record.signals.iter())
+        .flat_map(|signal| {
+            signal.resources.track_circuits.iter().map(|&index| ClaimedSlot {
+                node_key: signal.resources.node_key.clone(),
+                kind: ClaimedSlotKind::TrackCircuit,
+                index,
+            })
+        });
+    masts.chain(circuits).chain(logic).collect()
 }
 
 /// Resolve compiled edits to memory locations. Unknown paths and edits whose
@@ -328,6 +368,7 @@ pub fn resolve_edits(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::signaling::compiler::track_circuit_path;
     use crate::layout::facilities::{
             BlockSignalsRecord, Facility, NodeLogicPlacement, PlacedLogicGroup, SignalRecord, SignalResources,
         };
@@ -463,6 +504,119 @@ mod tests {
         assert_eq!(facts.logic[0].function, Some(3));
         assert_eq!(facts.logic[1].function, Some(2));
         assert_eq!(facts.logic[2].function, Some(0));
+    }
+
+    #[test]
+    fn mast_facts_carry_the_link_address_read_from_the_board() {
+        let mut tree = zeroed_tree();
+        let bytes = [5, 1, 1, 1, 7, 0, 0, 9];
+        set_value(
+            &mut tree,
+            "Rule to Aspect/Mast[2]/Link Address",
+            ConfigValue::EventId { bytes, hex: String::new() },
+        );
+        let facts = node_slot_facts(NODE, &tree, &[]);
+        assert_eq!(facts.masts[1].link_address, Some(bytes));
+        assert_eq!(facts.masts[0].link_address, None, "unread Link Address stays unknown");
+    }
+
+    #[test]
+    fn logic_facts_carry_the_sources_of_both_variables() {
+        let mut tree = zeroed_tree();
+        set_int(&mut tree, "Conditionals/Logic[2]/Variable #1/Source", 0);
+        set_int(&mut tree, "Conditionals/Logic[2]/Variable #2/Source", 3);
+        let facts = node_slot_facts(NODE, &tree, &[]);
+        assert_eq!(facts.logic[1].sources, vec![0, 3]);
+    }
+
+    #[test]
+    fn track_circuit_facts_report_claimed_and_in_use_by_outside_logic() {
+        let mut tree = zeroed_tree();
+        let link = [6, 6, 6, 6, 6, 6, 6, 6];
+        set_value(
+            &mut tree,
+            "Track Circuits/Circuit[4]/Link Address",
+            ConfigValue::EventId { bytes: link, hex: String::new() },
+        );
+        // Circuit 1: claimed by a facility. Circuit 2: used as a Source by active outside Logic.
+        // Circuit 3: named by a Blocked Logic only. Circuit 5: named by a claimed Logic only.
+        set_int(&mut tree, &logic_function_path(1), 2);
+        set_int(&mut tree, "Conditionals/Logic[1]/Variable #2/Source", 2);
+        set_int(&mut tree, "Conditionals/Logic[2]/Variable #1/Source", 3);
+        set_int(&mut tree, &logic_function_path(3), 2);
+        set_int(&mut tree, "Conditionals/Logic[3]/Variable #1/Source", 5);
+        let claimed = [
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::TrackCircuit, index: 1 },
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 3 },
+        ];
+        let facts = node_slot_facts(NODE, &tree, &claimed);
+        assert_eq!(facts.track_circuits.len(), 8);
+        let c = &facts.track_circuits;
+        assert_eq!((c[0].index, c[0].claimed, c[0].in_use), (1, true, true));
+        assert_eq!((c[1].claimed, c[1].in_use), (false, true));
+        assert_eq!((c[2].claimed, c[2].in_use), (false, false));
+        assert_eq!((c[4].claimed, c[4].in_use), (false, false));
+        assert_eq!(c[3].link_address, Some(link));
+        assert_eq!(c[0].link_address, None);
+    }
+
+    #[test]
+    fn releasing_a_track_circuit_clears_its_description_and_gives_a_fresh_link_address() {
+        use crate::signaling::compiler::{release_slots, ReleaseTarget};
+        let tree = zeroed_tree();
+        let claim = ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::TrackCircuit, index: 3 };
+        let released = release_slots(&[ReleaseTarget::from(&claim)], &[node_slot_facts(NODE, &tree, &[])]);
+        assert_eq!(released.issues, vec![]);
+        assert_eq!(
+            released.edits.iter().map(|e| (e.path.as_str(), e.value.clone())).collect::<Vec<_>>(),
+            vec![
+                ("Track Circuits/Circuit[3]/Remote Mast Description", EditValue::String { value: String::new() }),
+                ("Track Circuits/Circuit[3]/Link Address", EditValue::FreshEventId),
+            ]
+        );
+        let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
+        resolve_edits(&indexes, &released.edits).expect("circuit release edits resolve");
+    }
+
+    #[test]
+    fn a_signals_track_circuits_are_claimed_slots_of_its_facility() {
+        let mut record = record_with_mast(1);
+        record.signals[0].resources.track_circuits = vec![2, 4];
+        let doc = FacilitiesDocument { facilities: vec![facility("mine", record)], ..Default::default() };
+        let own = facility_claimed_slots(&doc, "mine");
+        assert_eq!(
+            own.iter().map(|c| (c.kind, c.index)).collect::<Vec<_>>(),
+            vec![(ClaimedSlotKind::Mast, 1), (ClaimedSlotKind::TrackCircuit, 2), (ClaimedSlotKind::TrackCircuit, 4)]
+        );
+        assert!(claimed_slots_from_facilities(&doc, Some("mine")).is_empty());
+    }
+
+    #[test]
+    fn removing_a_two_signal_facility_resets_masts_logic_and_the_track_circuit() {
+        use crate::signaling::compiler::{release_slots, ReleaseTarget};
+        let mut record = record_with_mast(1);
+        record.signals[0].resources.track_circuits = vec![2];
+        let mut second = record.signals[0].clone();
+        second.resources.mast = 2;
+        second.resources.track_circuits = vec![];
+        record.signals.push(second);
+        let doc = FacilitiesDocument {
+            facilities: vec![facility("mine", record)],
+            logic_placement: vec![NodeLogicPlacement {
+                node_key: NODE.into(),
+                groups: vec![PlacedLogicGroup { facility_id: "mine".into(), signal_id: "s".into(), first: 4, length: 2 }],
+            }],
+            ..Default::default()
+        };
+        let targets: Vec<_> = facility_claimed_slots(&doc, "mine").iter().map(ReleaseTarget::from).collect();
+        let tree = zeroed_tree();
+        let released = release_slots(&targets, &[node_slot_facts(NODE, &tree, &[])]);
+        assert_eq!(released.issues, vec![]);
+        let touched = |prefix: &str| released.edits.iter().any(|e| e.path.starts_with(prefix));
+        assert!(touched(&mast_processing_path(1)) && touched(&mast_processing_path(2)), "masts reset");
+        assert!(touched(&logic_function_path(4)) && touched(&logic_function_path(5)), "both Logic reset");
+        assert!(touched(&track_circuit_path(2)), "Track Circuit reset");
+        assert!(released.edits.iter().any(|e| e.path.ends_with("Link Address") && e.value == EditValue::FreshEventId));
     }
 
     #[test]

@@ -40,6 +40,18 @@ describe('facilityBoardSlots', () => {
     });
   });
 
+  it('names each Track Circuit a signal holds after the masts and Logic', () => {
+    const f = facility();
+    f.blockSignals!.signals[0].resources.trackCircuits = [3];
+    expect(facilityBoardSlots(f, placement).slots).toEqual([
+      { kind: 'mast', index: 2 },
+      { kind: 'mast', index: 1 },
+      { kind: 'logic', index: 4 },
+      { kind: 'logic', index: 5 },
+      { kind: 'trackCircuit', index: 3 },
+    ]);
+  });
+
   it('has no board and no slots for a facility without a block-signals record', () => {
     expect(facilityBoardSlots({ ...facility(), blockSignals: undefined }, placement)).toEqual({ nodeKey: undefined, slots: [] });
   });

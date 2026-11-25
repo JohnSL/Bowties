@@ -35,6 +35,12 @@ describe('BlockSignalsRemoveDialog', () => {
     expect(within(dialog).getByText(/Discard restores everything/)).toBeInTheDocument();
   });
 
+  it('lists Track Circuits after the masts and Logic', () => {
+    setup({ slots: [...slots, { kind: 'trackCircuit' as const, index: 1 }] });
+    const dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText(/Mast 1, Logic 1 and Track Circuit 1/)).toBeInTheDocument();
+  });
+
   it('Cancel emits cancel and Remove emits confirm', async () => {
     const { onConfirm, onCancel } = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
