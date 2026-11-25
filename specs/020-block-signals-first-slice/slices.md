@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 12/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5); S2 and the old S3–S8 superseded by E1a–E6
+Status: 13/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5, E6); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -138,7 +138,7 @@ flowchart LR
 | E3b-2 | Accept or keep a refused value | HITL | E4 | sketched |
 | E4 | Verify writes | HITL | E1b, E3b-1 | sketched |
 | E5 | Across boards | HITL | E3 + E3b-1 (re-cut 2026-11-24: no longer waits on E3r or E4; bench evidence checked in the slice) | done |
-| E6 | Maintain a three-block facility | AFK | E5 | sketched |
+| E6 | Maintain a three-block facility | AFK | E5 | done |
 | F1 | Hand off: lcc-rs inbound routing under a loaded bus | HITL | E6 | sketched |
 
 Hardware gates refer to [single-board evidence](manual-track-circuit-test.md)
@@ -1263,14 +1263,24 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 **Intent**: The modeler reorders blocks, adds one at the start, or removes a middle block, and surviving signals keep their identity and wiring.
 **Boundary**: Editor → compiler → drafts → Save.
 **Blocked by**: E5.
-**Status**: sketched
+**Status**: done
 
 **Acceptance criteria**:
-- [ ] All eight three-block occupancy combinations match the policy on the bench.
-- [ ] Adding a block at the start leaves the former last signal as the last one; adding at the end gives it a signal after it without replacing it.
-- [ ] After reorder, prepend or middle removal, surviving signals keep their identity, name, outputs and claimed slots through Save and reopen.
-- [ ] Removing the only remaining block requires removing the facility. Removal keeps block detection and unrelated configuration.
-- [ ] Maintenance edits show in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
+- [x] All eight three-block occupancy combinations match the policy on the bench (2026-11-25, user).
+- [x] Adding a block at the start leaves the former last signal as the last one; adding at the end gives it a signal after it without replacing it.
+- [x] After reorder, prepend or middle removal, surviving signals keep their identity, name, outputs and claimed slots through Save and reopen.
+- [x] Removing the only remaining block requires removing the facility. Removal keeps block detection and unrelated configuration.
+- [x] Maintenance edits show in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
+
+**Bench before tasking (2026-11-25, user)**: reordering blocks, adding a block at the start, removing a middle block (the signal before it re-links to the new next signal) and growing a saved group from two rungs to three all work on the bench with no code change. Remaining: automated tests that pin these, all eight occupancy combinations, removing the last block, and the Save toolbar, close prompt and Discard checks.
+
+**Tasks** (2026-11-25):
+- [x] E6-T1: Core (`bowties-core/tests/block_signals_compiler.rs`, `block_signals_identity.rs`): on a saved three-block facility, reorder, prepend and middle removal keep each surviving signal's ID, mast and Track Circuits; the signal before a removed block links to the new next signal; prepending leaves the former first signal untouched; a saved two-rung group grows to three when the next signal is turned off. These pin bench-proven behavior; a red test is a bug.
+- [x] E6-T2: Frontend integration (`app/src/lib/components/Facilities/`): a maintenance edit to a saved facility (reorder, middle removal) shows in the Save toolbar and close prompt, and Discard restores the saved facility and its configuration; removing the only block of a saved facility cannot finish with Done and points to Remove (removal keeps detection).
+- [x] E6-T3: Validation: core and app tests, svelte-check baseline, bench: all eight three-block occupancy combinations.
+
+**Validation (2026-11-25)**: no production change; every new test passed on its first run. bowties-core `cargo test` 640 passed (5 new), 0 warnings; vitest 129 files passed (1707 tests; new `facilityMaintenance.integration.test.ts`); svelte-check 113 (baseline). Bench: reorder, prepend, middle removal, growing a saved group to three rungs and all eight occupancy combinations passed (2026-11-25, user).
+- Finding: with every block removed in edit mode the editor cannot finish (later steps disabled, "Add a block first"), but nothing points to Remove facility; Cancel is the only way out. Safe, not discoverable.
 
 ### F1: Hand off — lcc-rs inbound routing under a loaded bus [HITL]
 

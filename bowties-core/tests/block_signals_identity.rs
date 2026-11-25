@@ -62,3 +62,18 @@ fn saved_id_carries_names_keyed_by_it() {
     let preview = preview_block_signals(request);
     assert_eq!(preview.signals[0].name, "Main Home");
 }
+
+#[test]
+fn reordering_a_saved_three_block_line_keeps_each_signal_id_by_its_protected_block() {
+    let line = |order: &[&str], saved: Vec<SavedSignalIdentity>| BlockSignalsRequest {
+        facility_id: "abs:f".into(),
+        blocks: order.iter().map(|b| block(&format!("block:{b}"))).collect(),
+        saved_signals: saved,
+        ..Default::default()
+    };
+    let original = ids(line(&["a", "b", "c"], vec![]));
+    let saved_all: Vec<SavedSignalIdentity> =
+        original.iter().zip(["a", "b", "c"]).map(|(id, b)| saved(id, &format!("block:{b}"))).collect();
+    let reordered = ids(line(&["c", "a", "b"], saved_all));
+    assert_eq!(reordered, [original[2].clone(), original[0].clone(), original[1].clone()]);
+}

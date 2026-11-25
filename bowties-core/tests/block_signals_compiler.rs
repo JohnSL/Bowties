@@ -1398,3 +1398,201 @@ fn a_joined_block_without_occupancy_events_blocks_the_signal_that_protects_it() 
     assert_eq!(issue.signal_id.as_deref(), Some(ids[0].as_str()));
     assert_blocked(&result);
 }
+
+// ---- Editing a saved facility: reorder, prepend, middle removal, growing group ----
+
+fn mast_link(mast: u32) -> EditValue {
+    EditValue::EventId { bytes: [3, 3, 3, 3, 3, 3, 0, mast as u8] }
+}
+
+fn value_at(c: &CompiledBlockSignals, path: &str) -> Option<EditValue> {
+    c.edits.iter().rev().find(|e| e.path == path).map(|e| e.value.clone())
+}
+
+/// A saved facility over `saved` blocks (one signal each, pins 9-10, 11-12, ...,
+/// masts 1.., circuits 1.. for all but the last, consecutive Logic groups) edited
+/// to `line`, whose signals enter at `entrances`. A block new to the facility is
+/// wired to pins 15 and 16.
+fn saved_edit(saved: &[&str], mut line: BlockSignalsRequest, entrances: &[&str]) -> (CompileInput, Vec<String>) {
+    let saved_ids = ids_of(&blocks_line(saved));
+    line.saved_signals = saved_ids
+        .iter()
+        .zip(saved)
+        .map(|(id, b)| bowties_core::signaling::SavedSignalIdentity {
+            signal_id: id.clone(),
+            protected_block: format!("block:{b}"),
+        })
+        .collect();
+    let new_ids = ids_of(&line);
+    let n = saved.len() as u32;
+    let mut node = free_node();
+    for (i, m) in node.masts.iter_mut().enumerate() {
+        m.link_address = Some([3, 3, 3, 3, 3, 3, 0, i as u8 + 1]);
+        m.in_use = (i as u32) < n;
+        m.claimed = m.in_use;
+    }
+    let logic_used = 2 * (n - 1) + 1;
+    for l in node.logic.iter_mut().take(logic_used as usize) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    node.track_circuits = (1..=8)
+        .map(|i| TrackCircuitFact { index: i, in_use: i < n, claimed: i < n, link_address: None })
+        .collect();
+    let pins = |block: &str| match saved.iter().position(|b| *b == block) {
+        Some(k) => (10 + 2 * k as u32, 9 + 2 * k as u32),
+        None => (16, 15),
+    };
+    let wiring = new_ids
+        .iter()
+        .zip(entrances)
+        .map(|(id, b)| {
+            let (red, green) = pins(b);
+            SignalWiring { signal_id: id.clone(), node_key: NODE.into(), red_output: red, green_output: green }
+        })
+        .collect();
+    let occupancy = line
+        .blocks
+        .iter()
+        .map(|b| occupancy_of(&b.block_id[6..], b.block_id.as_bytes()[6] - b'a' + 1))
+        .collect();
+    let mut groups = vec![];
+    let mut next = 1;
+    for (k, id) in saved_ids.iter().enumerate() {
+        let length = if (k as u32) < n - 1 { 2 } else { 1 };
+        groups.push(group(id, next, length));
+        next += length;
+    }
+    let mut c = CompileInput {
+        wiring,
+        line,
+        hardware: SignalHardwareFacts { hosts: vec![host()] },
+        nodes: vec![node],
+        occupancy,
+        saved_resources: saved_ids
+            .iter()
+            .enumerate()
+            .map(|(k, id)| held(id, k as u32 + 1, if (k as u32) < n - 1 { vec![k as u32 + 1] } else { vec![] }))
+            .collect(),
+        logic_placement: vec![NodeLogicPlacement { node_key: NODE.into(), groups }],
+    };
+    for k in 0..n {
+        own_pins(&mut c, NODE, [9 + 2 * k, 10 + 2 * k], k + 1);
+    }
+    (c, saved_ids)
+}
+
+fn resources_of<'a>(c: &'a CompiledBlockSignals, id: &str) -> &'a SignalResources {
+    &c.resources.iter().find(|r| r.signal_id == id).unwrap_or_else(|| panic!("{id} in {:?}", c.resources)).resources
+}
+
+#[test]
+fn reordering_a_saved_facility_keeps_ids_masts_and_circuits_and_relinks_to_the_new_next_signal() {
+    // Passed on first run (bench-proven).
+    let (c, saved) = saved_edit(&["a", "b", "c"], blocks_line(&["c", "a", "b"]), &["c", "a", "b"]);
+    let (a, b, cc) = (&saved[0], &saved[1], &saved[2]);
+    assert_eq!(ids_of(&c.line), vec![cc.clone(), a.clone(), b.clone()]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+
+    assert_eq!(resources_of(&result, a).mast, 1);
+    assert_eq!(resources_of(&result, b).mast, 2);
+    assert_eq!(resources_of(&result, cc).mast, 3);
+    // A keeps circuit 1 and now links to B's mast; B is terminal and releases circuit 2.
+    assert_eq!(resources_of(&result, a).track_circuits, vec![1]);
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[1]/Link Address"), Some(mast_link(2)));
+    assert_eq!(resources_of(&result, b).track_circuits, Vec::<u32>::new());
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[2]/Link Address"), Some(EditValue::FreshEventId));
+    // C was terminal and is now internal: it takes the lowest free circuit and links to A's mast.
+    assert_eq!(resources_of(&result, cc).track_circuits, vec![3]);
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[3]/Link Address"), Some(mast_link(1)));
+}
+
+#[test]
+fn prepending_a_block_to_a_saved_facility_leaves_the_saved_signals_untouched() {
+    // Passed on first run (bench-proven).
+    let (c, saved) = saved_edit(&["a", "b"], blocks_line(&["x", "a", "b"]), &["x", "a", "b"]);
+    let (a, b) = (&saved[0], &saved[1]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    let x = &ids_of(&c.line)[0];
+
+    assert_eq!(resources_of(&result, a), &SignalResources { node_key: NODE.into(), mast: 1, track_circuits: vec![1] });
+    assert_eq!(resources_of(&result, b), &SignalResources { node_key: NODE.into(), mast: 2, track_circuits: vec![] });
+    let new = resources_of(&result, x);
+    assert_eq!((new.mast, new.track_circuits.clone()), (3, vec![2]));
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[2]/Link Address"), Some(mast_link(1)));
+
+    let groups = &result.placement[0].groups;
+    assert!(groups.contains(&group(a, 1, 2)) && groups.contains(&group(b, 3, 1)), "{groups:?}");
+    let xg = groups.iter().find(|g| &g.signal_id == x).unwrap();
+    assert!(xg.first >= 4 && xg.length == 2, "{groups:?}");
+    // A's circuit still links to B's mast, and nothing is reset.
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[1]/Link Address"), Some(mast_link(2)));
+    assert!(!result.edits.iter().any(|e| e.value == EditValue::FreshEventId && !e.path.contains("Circuit[2]")));
+    assert!(!result.edits.iter().any(|e| e.path.ends_with("/Function") && e.value == int(0)), "no Logic is reset");
+}
+
+#[test]
+fn removing_the_middle_block_relinks_the_first_signal_and_resets_the_dropped_one() {
+    // Passed on first run (bench-proven).
+    let (c, saved) = saved_edit(&["a", "b", "c"], blocks_line(&["a", "c"]), &["a", "c"]);
+    let (a, b, cc) = (&saved[0], &saved[1], &saved[2]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+
+    assert_eq!(resources_of(&result, a), &SignalResources { node_key: NODE.into(), mast: 1, track_circuits: vec![1] });
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[1]/Link Address"), Some(mast_link(3)));
+    assert_eq!(resources_of(&result, cc), &SignalResources { node_key: NODE.into(), mast: 3, track_circuits: vec![] });
+    assert!(result.resources.iter().all(|r| &r.signal_id != b));
+
+    assert_eq!(value_at(&result, "Rule to Aspect/Mast[2]/Mast Processing"), Some(int(0)));
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[2]/Link Address"), Some(EditValue::FreshEventId));
+    let placed = &result.placement[0].groups;
+    assert!(placed.iter().all(|g| &g.signal_id != b));
+    assert!(placed.contains(&group(a, 1, 2)), "{placed:?}");
+    for logic in [3u32, 4] {
+        let reused = placed.iter().any(|g| (g.first..g.first + g.length).contains(&logic));
+        let reset = value_at(&result, &format!("Conditionals/Logic[{logic}]/Function")) == Some(int(0));
+        assert!(reused != reset, "Logic {logic}: reused {reused}, reset {reset}");
+    }
+}
+
+#[test]
+fn a_saved_group_grows_from_two_rungs_to_three_when_the_next_block_is_joined() {
+    // Passed on first run (bench-proven).
+    let mut line = blocks_line(&["a", "b", "c"]);
+    line.blocks[1].joined_to_previous = true;
+    let (c, saved) = saved_edit(&["a", "b", "c"], line, &["a", "c"]);
+    let (a, b, cc) = (&saved[0], &saved[1], &saved[2]);
+    assert_eq!(ids_of(&c.line), vec![a.clone(), cc.clone()]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+
+    let placed = &result.placement[0].groups;
+    let ga = placed.iter().find(|g| &g.signal_id == a).unwrap_or_else(|| panic!("{placed:?}"));
+    assert_eq!(ga.length, 3, "{placed:?}");
+    for rung in 0..3 {
+        let logic = ga.first + rung;
+        assert!(
+            result.edits.iter().any(|e| e.path == format!("Conditionals/Logic[{logic}]/Function") && e.value != int(0)),
+            "Logic {logic} written"
+        );
+    }
+    assert_eq!(resources_of(&result, a), &SignalResources { node_key: NODE.into(), mast: 1, track_circuits: vec![1] });
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[1]/Link Address"), Some(mast_link(3)));
+    assert_eq!(resources_of(&result, cc).mast, 3);
+
+    // B's dropped signal releases its mast and circuit.
+    assert!(result.resources.iter().all(|r| &r.signal_id != b));
+    assert_eq!(value_at(&result, "Rule to Aspect/Mast[2]/Mast Processing"), Some(int(0)));
+    assert_eq!(value_at(&result, "Track Circuits/Circuit[2]/Link Address"), Some(EditValue::FreshEventId));
+    assert!(placed.iter().all(|g| &g.signal_id != b));
+    // Every old Logic is either inside a placed group or reset, never both.
+    for logic in 1u32..=5 {
+        let reused = placed.iter().any(|g| (g.first..g.first + g.length).contains(&logic));
+        let reset = value_at(&result, &format!("Conditionals/Logic[{logic}]/Function")) == Some(int(0));
+        assert!(!(reused && reset), "Logic {logic} both reused and reset");
+        assert!(reused || reset, "Logic {logic} neither reused nor reset: {placed:?}");
+    }
+}
