@@ -20,7 +20,7 @@ Case-study precedent — **GridConnect `\r\n` terminator** (resolved 2026-07-18)
 
 Open candidates:
 
-- **OIR temporary-error retry.** `OpenLCB_Java`'s `MimicNodeStore.handleOptionalIntRejected` retries when `code & 0x2000` is set (temporary error flag); Bowties' `on_cdi_frame`, `on_memory_read_frame`, and `on_memory_write_frame` OIR branches terminate on any OIR regardless of the flag. Aligning would mean checking the temporary-error bit and either retrying via the existing `WRITE_MEMORY_MAX_RETRIES` counter or extending the same counter to reads and CDI. Tracked as "Fix C" from the OIR architectural analysis; unblocked by the 2026-07-25 TDE-narrowing resolution below (Fix B), and by the OIR byte-swap fix (Fix A).
+- **OIR temporary-error retry.** (SNIP/PIP now have a per-exchange `attempt` counter, per ADR-0016 §2026-11-20; a temporary-OIR resend for SNII/PIP should reuse it.) `OpenLCB_Java`'s `MimicNodeStore.handleOptionalIntRejected` retries when `code & 0x2000` is set (temporary error flag); Bowties' `on_cdi_frame`, `on_memory_read_frame`, and `on_memory_write_frame` OIR branches terminate on any OIR regardless of the flag. Aligning would mean checking the temporary-error bit and either retrying via the existing `WRITE_MEMORY_MAX_RETRIES` counter or extending the same counter to reads and CDI. Tracked as "Fix C" from the OIR architectural analysis; unblocked by the 2026-07-25 TDE-narrowing resolution below (Fix B), and by the OIR byte-swap fix (Fix A).
 - **Datagram ACK timing / content.** The user's peer OIR'd citing DatagramReceivedOk (`0x0A28`) as the "unknown" MTI, which is unusual for a datagram-supporting node. Worth comparing exactly what bytes Bowties emits for DatagramReceivedOk against JMRI on the same request, including any inter-frame timing between the ACK and the next chunk. Blocked on obtaining a JMRI trace of a working write to the same node.
 - **Post-ACK pacing.** The `read_config.post_ack_delay_ms` escape hatch stays reachable in `tuning.toml` (per the "SPROG-debug serial scaffolding retired" entry); confirm JMRI does zero pacing at the equivalent seam so we know the 0-default is the correct alignment target.
 - **Alias-conflict sequencing (CID / RID / AMD / AMR).** Not concretely known to diverge, but worth a targeted audit given how many peers implement partial CAN-physical support.
@@ -40,6 +40,13 @@ Open candidates:
 - **Resolved (E3b-1, 2026-11-23)**: the node tree's `modified_value` layer, the draft-to-backend mirror and `write_modified_values` are gone. Save and the Sync Panel write through one writer (`bowties-core/src/sync/writer.rs`), and "still waiting" is one predicate (`is_waiting` / `isWaitingPendingChange`).
 - **Watch**: `is_waiting` counts `Skipped` rows as waiting, but no code sets `Skipped` today. If E3b-2 or the Sync Panel starts persisting it, decide whether skipped rows show in the effective tree and the waiting count.
 - **Open**: the catalog still builds its own overlay instead of reading `effective_config_tree`. Tracked in `specs/backlog.md` ("Bowtie catalog reads configuration through the effective view").
+
+### SNIP/PIP timeout resend: a deliberate JMRI divergence (resolved 2026-11-20, #28)
+- **Area**: `lcc-rs/src/peer_session.rs` (`handle_deadline`, `issue_snip_request` / `issue_pip_request`, `cached_snip` / `cached_pip`) and `bowties-core/src/node_proxy.rs` (the SNIP/PIP cache-hit gate).
+- **Risk** (resolved): one lost addressed SNIP request poisoned a node for the whole session. Two layers cached Timeout as final, `PeerSession` and `LiveNodeProxy`, so Refresh and any re-query never reached the wire again. With no SNIP data, CDI could not be resolved.
+- **Resolution**: bounded resend of up to 3 attempts at 2 s each. Timeout is not cached, and the session returns a typed `QueryOutcome`. See ADR-0016 §2026-11-20.
+- **Divergence**: JMRI's `MimicNodeStore` sends SNII/PIP once (`numTriesLeft = 1`, 700 ms). Bowties resends on timeout, citing JMRI's own `MemoryConfigurationService` `MAX_TRIES = 3` as precedent. It is kept deliberately and is not an alignment candidate.
+- **Residual**: if a peer answers both an original attempt and its resend, the duplicate reply arrives after the exchange has completed. Inbound frames are polled only while an exchange is active, so it is normally dropped. If the next exchange is also SNIP, the stray middle or final frame produces "SNIP middle frame received without first frame". This is rare and has not been observed in the field.
 
 ### `TerminateDueToError` emission narrowed to our-fault-live-wire — peer-initiated terminals no longer emit TDE (resolved 2026-07-25)
 - **Area**: `lcc-rs/src/peer_session.rs` (three OIR branches, three non-resend-DR branches / retry-cap-exhaustion, two `ReadReply::Failed` branches — eight inline emit sites removed), `lcc-rs/tests/peer_session_cdi.rs` + `peer_session_config.rs` (eight per-terminal-class tests renamed to `..._no_tde` with count-assertions flipped `== 1` → `== 0`), ADR-0016 §2026-07-25 extension + ADR-0018 §2026-07-25 extension.
@@ -133,6 +140,17 @@ Open candidates:
 - **Risk** (resolved): the extraction data classified exact `childFields` per group, but assembly discarded those fields and emitted parent-group declarations. Signal-LCC's one replicated Rule group contains both Consumer and Producer EventIds; duplicate parent targets collapsed under intentional last-write-wins composition, and the broad Mast declaration also captured nested Rule events.
 - **Fix**: the assembler now expands each event-role declaration to the EventId leaves it actually classifies and fails when two role declarations disagree for the same leaf. `apply_event_role` in `bowties-core/src/profile/mod.rs` walks resolved EventId-leaf paths and applies the declared role only to that leaf across every replicated instance, so mixed-role groups (Signal-LCC Rule-to-Aspect) retain distinct Producer/Consumer declarations. Group-path declarations still apply role to all descendant leaves. Coverage: `test_profile_tools.py` for the assembler; `bundled_signal_lcc_profile_contract.rs` (with the test-owned `signal-lcc-c7c-rule-to-aspect.xml` fixture) for the shipping profile's exact Rule-to-Aspect roles.
 - **Authoring invariant**: generated profiles must target EventId-leaf paths, not their containing groups, whenever a group holds more than one role. `#N` distinguishes same-name siblings or replicated instances, never roles within one group.
+
+### Bundled profile ↔ CDI pairing and filename-as-identity profile lookup (resolved 2026-11-19, issue #30)
+- **Area**: `app/src-tauri/profiles/`, `app/src-tauri/src/profile/loader.rs`, `bowties-core/src/placeholder.rs` (`load_bundled_cdi_with_xml`).
+- **Risk** (resolved):
+  - (1) The placeholder picker listed every bundled profile, but three RR-CirKits CDIs were never committed, so adding those boards failed with `BundledCdiNotFound`.
+  - (2) `load_profile` matched profiles by a sanitized filename rebuilt from the CDI identity. The TurnoutBoss bundle's hyphen stem (the Spec 014 research.md space→`-` rule, never implemented) did not match, so TurnoutBoss nodes silently had no profile overlay.
+- **Fix**:
+  - Missing CDIs bundled.
+  - Profiles now resolve by declared `nodeType` identity through `make_profile_key` (ADR-0009, 2026-11-19 extension).
+  - A loader integrity test runs the production picker listing, the factory CDI loader and identity resolution over the real `profiles/` dir.
+- **Remaining observation**: `profile/loader.rs::profile_search_dirs` and `commands/cdi.rs::bundled_cdi_search_dirs` are parallel copies of the same debug-source-then-resource-dir rule. They have not drifted yet. Consolidate them into one resolver if either changes.
 
 ### Config-read batch count inflated vs OpenLCB_Java reference (observed 2026-07-21)
 - **Area**: `app/src-tauri/src/commands/cdi.rs` (`build_read_plan`, `get_element_size`, batch execution loop)

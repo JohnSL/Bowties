@@ -92,36 +92,6 @@ pub fn classify_snapshot_cdi_source(
     }
 }
 
-/// Load a bundled CDI XML file from the first matching `<stem>.cdi.xml` in
-/// `search_dirs` (Spec 014, ADR-0008).
-///
-/// Pure helper — caller resolves the search dirs (matching the
-/// `profile_search_dirs` discipline in `profile/loader.rs`). On success
-/// Superseded by `placeholder::load_bundled_cdi_with_xml` in S8.10.
-/// Retained for test coverage of bundled CDI resolution.
-#[cfg(test)]
-pub fn load_bundled_cdi(
-    search_dirs: &[std::path::PathBuf],
-    profile_stem: &str,
-) -> Result<lcc_rs::cdi::Cdi, String> {
-    let file_name = format!("{profile_stem}.cdi.xml");
-    let path = search_dirs
-        .iter()
-        .map(|dir| dir.join(&file_name))
-        .find(|candidate| candidate.exists())
-        .ok_or_else(|| {
-            format!(
-                "BundledCdiNotFound: '{file_name}' not present in any bundled-profiles directory"
-            )
-        })?;
-
-    let xml = std::fs::read_to_string(&path).map_err(|e| {
-        format!("BundledCdiReadFailed: '{}': {e}", path.display())
-    })?;
-
-    lcc_rs::cdi::parser::parse_cdi(&xml).map_err(|e| format!("InvalidXml: {e}"))
-}
-
 /// Tell the frontend a node's `LayoutState` config tree changed so its
 /// `nodeTreeStore` reloads it (`node-tree-updated`, payload `{nodeId, leafCount}`).
 pub(crate) fn emit_node_tree_updated(app: &tauri::AppHandle, node_id: &str, leaf_count: usize) {
@@ -1276,7 +1246,7 @@ mod tests {
         std::fs::write(dir.join(format!("{stem}.cdi.xml")), S4_MIN_CDI_XML)
             .expect("write fixture");
 
-        let cdi = load_bundled_cdi(&[dir.clone()], stem)
+        let (_xml, cdi) = crate::placeholder::load_bundled_cdi_with_xml(&[dir.clone()], stem)
             .expect("bundled CDI must load");
 
         assert_eq!(cdi.segments.len(), 1);
@@ -1288,7 +1258,7 @@ mod tests {
     #[test]
     fn s4_load_bundled_cdi_errors_when_file_missing() {
         let dir = s4_make_temp_profiles_dir();
-        let err = load_bundled_cdi(&[dir.clone()], "Nonexistent_Stem")
+        let err = crate::placeholder::load_bundled_cdi_with_xml(&[dir.clone()], "Nonexistent_Stem")
             .expect_err("missing bundled CDI must error");
         assert!(
             err.starts_with("BundledCdiNotFound"),
@@ -1305,7 +1275,7 @@ mod tests {
         std::fs::write(dir_b.join("Test_Placeholder.cdi.xml"), S4_MIN_CDI_XML)
             .expect("write fixture");
 
-        let cdi = load_bundled_cdi(&[dir_a.clone(), dir_b.clone()], "Test_Placeholder")
+        let (_xml, cdi) = crate::placeholder::load_bundled_cdi_with_xml(&[dir_a.clone(), dir_b.clone()], "Test_Placeholder")
             .expect("must find file in second search dir");
         assert_eq!(cdi.segments.len(), 1);
 

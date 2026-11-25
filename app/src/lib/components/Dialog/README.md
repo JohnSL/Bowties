@@ -104,7 +104,7 @@ regions. The shared header and footer remain outside that workspace.
 | `Esc`          | `onCancel` (when `closable`)                   |
 | `Tab`          | Cycles focus within the dialog (trap)          |
 | `Shift+Tab`    | Cycles focus backward within the dialog        |
-| Click on overlay | `onCancel` (when `closable`)                 |
+| Click on overlay | **Nothing.** Modals close only via an explicit action (ADR-0014, 2026-11-19) |
 | Click on ×     | `onCancel` (when `closable`; only shown if header present) |
 | `Enter`        | **Not handled by the shell.** Use a `type="submit"` button inside a `<form>` to wire Enter to a primary action. |
 

@@ -114,13 +114,13 @@ describe('Dialog — closable=true (default)', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('overlay click fires onCancel', async () => {
+  it('overlay click does NOT fire onCancel — modals close only via an explicit action (ADR-0014)', async () => {
     const onCancel = vi.fn();
     const { container } = render(Dialog, { props: baseProps({ onCancel }) });
     const overlay = container.querySelector('.fluent-dialog-overlay') as HTMLElement;
     expect(overlay).toBeTruthy();
     await fireEvent.click(overlay);
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('clicks inside the surface do NOT fire onCancel', async () => {

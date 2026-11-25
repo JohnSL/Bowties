@@ -20,7 +20,7 @@
 //! These tests exercise the public API only. Wire assertions use the shared
 //! `MockTransport` from `lcc-rs::transport::mock`.
 
-use lcc_rs::peer_session::{InboundEvent, PeerCommand, PeerError, PeerSession};
+use lcc_rs::peer_session::{InboundEvent, PeerCommand, PeerError, PeerSession, QueryOutcome};
 use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use lcc_rs::transport::mock::MockTransport;
 use lcc_rs::transport_actor::ReceivedMessage;
@@ -101,6 +101,19 @@ fn queue_snip_reply(transport: &mut MockTransport, source: u16, dest: u16, paylo
     }
 }
 
+fn snip_reply_frames(source: u16, dest: u16, payload: &[u8]) -> Vec<String> {
+    let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+    let n = chunks.len();
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
+            snip_reply_frame(source, dest, flag, chunk)
+        })
+        .collect()
+}
+
 /// Count outbound SNIPRequest frames (MTI 0x19DE8).
 fn count_snip_requests(transport: &MockTransport, our_alias: u16, dest_alias: u16) -> usize {
     let expected_header = format!(":X{:08X}N", (0x19DE8u32 << 12) | our_alias as u32);
@@ -135,7 +148,7 @@ async fn cold_query_snip_returns_data() {
     let (mut actor, handle) = make_actor(transport);
     let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
 
-    let snip = session.query_snip().await.unwrap().expect("SNIP data");
+    let snip = session.query_snip().await.unwrap().into_data().expect("SNIP data");
     assert_eq!(snip.manufacturer, "ACME");
     assert_eq!(snip.model, "Widget");
     assert_eq!(count_snip_requests(&transport_probe, our_alias(), node_alias), 1);
@@ -161,8 +174,8 @@ async fn two_concurrent_query_snip_coalesce_to_single_wire_request() {
         async move { a.query_snip().await },
         async move { b.query_snip().await },
     );
-    let da = ra.unwrap().expect("A SNIP");
-    let db = rb.unwrap().expect("B SNIP");
+    let da = ra.unwrap().into_data().expect("A SNIP");
+    let db = rb.unwrap().into_data().expect("B SNIP");
     assert_eq!(da.manufacturer, "ACME");
     assert_eq!(db.manufacturer, "ACME");
 
@@ -207,7 +220,7 @@ async fn cold_query_pip_returns_flags() {
     let (mut actor, handle) = make_actor(transport);
     let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
 
-    let flags = session.query_pip().await.unwrap().expect("PIP flags");
+    let flags = session.query_pip().await.unwrap().into_data().expect("PIP flags");
     assert!(flags.datagram);
     assert!(flags.snip);
     assert_eq!(count_pip_requests(&transport_probe, our_alias(), node_alias), 1);
@@ -232,8 +245,8 @@ async fn two_concurrent_query_pip_coalesce_to_single_wire_request() {
         async move { a.query_pip().await },
         async move { b.query_pip().await },
     );
-    let _ = ra.unwrap().expect("A PIP");
-    let _ = rb.unwrap().expect("B PIP");
+    let _ = ra.unwrap().into_data().expect("A PIP");
+    let _ = rb.unwrap().into_data().expect("B PIP");
     let count = count_pip_requests(&transport_probe, our_alias(), node_alias);
     assert_eq!(count, 1, "coalescing must produce exactly one outbound PIP request, got {}", count);
 
@@ -289,7 +302,7 @@ async fn broadcast_lagged_aborts_active_exchange_and_preserves_caches() {
     let (mut actor, handle) = make_actor(transport);
     let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
 
-    let seed = session.query_snip().await.unwrap().expect("seed SNIP");
+    let seed = session.query_snip().await.unwrap().into_data().expect("seed SNIP");
     assert_eq!(seed.manufacturer, "ACME");
 
     // Now start a PIP exchange but never send a reply. Then inject a
@@ -320,7 +333,7 @@ async fn broadcast_lagged_aborts_active_exchange_and_preserves_caches() {
 
     // SNIP cache preserved — subsequent query returns cached data with no
     // extra outbound frame.
-    let snip = session.query_snip().await.unwrap().expect("cached SNIP");
+    let snip = session.query_snip().await.unwrap().into_data().expect("cached SNIP");
     assert_eq!(snip.manufacturer, "ACME");
 
     actor.shutdown().await;
@@ -369,6 +382,7 @@ async fn inbound_lag_aborts_active_pip_and_preserves_snip_cache() {
         .await
         .unwrap()
         .unwrap()
+        .into_data()
         .expect("seed SNIP populated the cache");
     assert_eq!(seed.manufacturer, "ACME");
 
@@ -392,6 +406,7 @@ async fn inbound_lag_aborts_active_pip_and_preserves_snip_cache() {
         .query_snip()
         .await
         .unwrap()
+        .into_data()
         .expect("cached SNIP survives the lag abort");
     assert_eq!(snip.manufacturer, "ACME");
 }
@@ -483,7 +498,7 @@ async fn registry_delivered_handle_supports_query_snip() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let session = session.expect("session spawned via registry");
-    let snip = session.query_snip().await.unwrap().expect("SNIP via registry handle");
+    let snip = session.query_snip().await.unwrap().into_data().expect("SNIP via registry handle");
     assert_eq!(snip.manufacturer, "ACME");
 
     actor.shutdown().await;
@@ -533,7 +548,7 @@ async fn snip_status_progression_ends_in_complete() {
     let (mut actor, handle) = make_actor(transport);
     let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
 
-    let _ = session.query_snip().await.unwrap().expect("first SNIP");
+    let _ = session.query_snip().await.unwrap().into_data().expect("first SNIP");
     let count1 = count_snip_requests(&transport_probe, our_alias(), node_alias);
     let _ = session.query_snip().await.unwrap();
     let count2 = count_snip_requests(&transport_probe, our_alias(), node_alias);
@@ -565,7 +580,7 @@ async fn alias_changed_updates_outbound_destination() {
     // Change alias BEFORE any query so the subsequent SNIPRequest is routed
     // to the new destination.
     session.command(PeerCommand::AliasChanged { new_alias: node_alias_new }).await.unwrap();
-    let snip = session.query_snip().await.unwrap().expect("SNIP after alias change");
+    let snip = session.query_snip().await.unwrap().into_data().expect("SNIP after alias change");
     assert_eq!(snip.manufacturer, "ACME");
 
     // No SNIPRequest should have been sent to the OLD alias.
@@ -587,5 +602,194 @@ async fn registry_is_arc_sharable_across_tasks() {
         r2.len().await
     });
     let _ = handle_task.await.unwrap();
+    actor.shutdown().await;
+}
+
+// ── Bug #28: lost SNIP/PIP requests are resent by the session ────────────
+
+/// Queue `reply` onto the mock once the session has put `wanted` matching
+/// requests on the wire. Models a peer that ignores the first request(s) and
+/// answers a resend.
+fn reply_after_requests(
+    probe: MockTransport,
+    count: fn(&MockTransport, u16, u16) -> usize,
+    node_alias: u16,
+    wanted: usize,
+    reply: Vec<String>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut probe = probe;
+        loop {
+            if count(&probe, our_alias(), node_alias) >= wanted {
+                for frame in reply {
+                    probe.add_receive_frame(frame);
+                }
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+}
+
+#[tokio::test]
+async fn lost_snip_request_is_resent_and_resend_reply_completes_waiter() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, 0x91]);
+    let transport = MockTransport::new();
+    let probe = transport.clone();
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    // The peer ignores request #1 and answers only once request #2 arrives.
+    let reply = snip_reply_frames(node_alias, our_alias(), &minimal_snip_payload());
+    let responder = reply_after_requests(probe.clone(), count_snip_requests, node_alias, 2, reply);
+
+    let result = tokio::time::timeout(Duration::from_secs(10), session.query_snip())
+        .await
+        .expect("query_snip did not finish");
+    let _ = responder.abort();
+    let snip = result.unwrap().into_data().expect("SNIP data from resend reply");
+    assert_eq!(snip.manufacturer, "ACME");
+    assert_eq!(count_snip_requests(&probe, our_alias(), node_alias), 2);
+
+    actor.shutdown().await;
+}
+
+#[tokio::test]
+async fn lost_pip_request_is_resent_and_resend_reply_completes_waiter() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, 0x92]);
+    let transport = MockTransport::new();
+    let probe = transport.clone();
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let reply = vec![pip_reply_frame(node_alias, our_alias(), &[0x80, 0x00])];
+    let responder = reply_after_requests(probe.clone(), count_pip_requests, node_alias, 2, reply);
+
+    let result = tokio::time::timeout(Duration::from_secs(10), session.query_pip())
+        .await
+        .expect("query_pip did not finish");
+    let _ = responder.abort();
+    let _flags = result.unwrap().into_data().expect("PIP flags from resend reply");
+    assert_eq!(count_pip_requests(&probe, our_alias(), node_alias), 2);
+
+    actor.shutdown().await;
+}
+
+#[tokio::test]
+async fn exhausted_snip_attempts_are_not_cached_and_next_query_hits_the_wire() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, 0xA1]);
+    let transport = MockTransport::new();
+    let mut probe = transport.clone();
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    // Peer never answers: three attempts, then a Timeout (no data).
+    let first = session.query_snip().await.unwrap();
+    assert!(matches!(first, QueryOutcome::Timeout), "no reply must surface an explicit Timeout, got {:?}", first);
+    assert_eq!(count_snip_requests(&probe, our_alias(), node_alias), 3);
+
+    // The Timeout was not cached: a new query goes back on the wire and a
+    // reply now completes it.
+    for f in snip_reply_frames(node_alias, our_alias(), &minimal_snip_payload()) {
+        probe.add_receive_frame(f);
+    }
+    let second = session.query_snip().await.unwrap().into_data().expect("fresh SNIP after timeout");
+    assert_eq!(second.manufacturer, "ACME");
+    assert_eq!(count_snip_requests(&probe, our_alias(), node_alias), 4);
+
+    actor.shutdown().await;
+}
+
+#[tokio::test]
+async fn parked_snip_query_after_timeout_issues_fresh_request_when_drained() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, 0xA2]);
+    let transport = MockTransport::new();
+    let mut probe = transport.clone();
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    // Leave the session with a prior SNIP Timeout.
+    assert!(matches!(session.query_snip().await.unwrap(), QueryOutcome::Timeout));
+    assert_eq!(count_snip_requests(&probe, our_alias(), node_alias), 3);
+
+    // Start a PIP exchange, then park a SNIP query behind it.
+    probe.add_receive_frame(pip_reply_frame(node_alias, our_alias(), &[0x80, 0x00]));
+    let pip_session = session.clone();
+    let pip_task = tokio::spawn(async move { pip_session.query_pip().await });
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let snip_session = session.clone();
+    let snip_task = tokio::spawn(async move { snip_session.query_snip().await });
+
+    // Once the PIP exchange finishes, the drain must issue a new SNIP request.
+    pip_task.await.unwrap().unwrap().into_data().expect("PIP flags");
+    let mut late = probe.clone();
+    let responder = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        for f in snip_reply_frames(node_alias, our_alias(), &minimal_snip_payload()) {
+            late.add_receive_frame(f);
+        }
+    });
+    let snip = tokio::time::timeout(Duration::from_secs(10), snip_task)
+        .await
+        .expect("parked SNIP query did not finish")
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .expect("fresh SNIP from drained request");
+    let _ = responder.await;
+    assert_eq!(snip.manufacturer, "ACME");
+    assert_eq!(count_snip_requests(&probe, our_alias(), node_alias), 4);
+
+    actor.shutdown().await;
+}
+
+/// OptionalInteractionRejected (MTI 0x19068) addressed to us, rejecting
+/// `rejected_mti` with a permanent error code.
+fn oir_frame(source_alias: u16, dest_alias: u16, rejected_mti: u16) -> String {
+    let header = (0x19068u32 << 12) | source_alias as u32;
+    let data = [
+        ((dest_alias >> 8) & 0x0F) as u8,
+        (dest_alias & 0xFF) as u8,
+        0x10,
+        0x40,
+        (rejected_mti >> 8) as u8,
+        (rejected_mti & 0xFF) as u8,
+    ];
+    let data_hex: String = data.iter().map(|b| format!("{:02X}", b)).collect();
+    format!(":X{:08X}N{};", header, data_hex)
+}
+
+#[tokio::test]
+async fn not_supported_is_explicit_and_terminal_for_snip_and_pip() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, 0xB1]);
+    let mut transport = MockTransport::new();
+    let probe = transport.clone();
+    transport.add_receive_frame(oir_frame(node_alias, our_alias(), 0x0DE8));
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let first = session.query_snip().await.unwrap();
+    assert!(matches!(first, QueryOutcome::NotSupported), "got {:?}", first);
+    let again = session.query_snip().await.unwrap();
+    assert!(matches!(again, QueryOutcome::NotSupported), "got {:?}", again);
+    assert_eq!(
+        count_snip_requests(&probe, our_alias(), node_alias),
+        1,
+        "NotSupported is final: no second wire request"
+    );
+
+    let mut probe_pip = probe.clone();
+    probe_pip.add_receive_frame(oir_frame(node_alias, our_alias(), 0x0828));
+    let first = session.query_pip().await.unwrap();
+    assert!(matches!(first, QueryOutcome::NotSupported), "got {:?}", first);
+    let again = session.query_pip().await.unwrap();
+    assert!(matches!(again, QueryOutcome::NotSupported), "got {:?}", again);
+    assert_eq!(count_pip_requests(&probe, our_alias(), node_alias), 1);
+
     actor.shutdown().await;
 }

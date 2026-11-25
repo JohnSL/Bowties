@@ -10,16 +10,19 @@
    * Name leaf is edited.
    *
    * dialog-shell-refactor (Slice 4): wraps the Fluent `Dialog` shell.
-   * Body uses a native `<form>` so Enter on the focused select submits via
-   * the primary `Add board` button. Esc / overlay / × → cancel (shell).
+   * Body uses a native `<form>` so Enter on the focused radio submits via
+   * the primary `Add board` button. Board models render in the shared
+   * `SingleSelectList` (model with manufacturer beneath), matching the
+   * other add dialogs. Esc / overlay / × → cancel (shell).
    */
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listBundledProfiles, type BundledProfileSummary } from '$lib/api/layout';
   import { addPlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import Dialog from './Dialog/Dialog.svelte';
   import DialogTitle from './Dialog/DialogTitle.svelte';
   import DialogActions from './Dialog/DialogActions.svelte';
   import Button from './Dialog/Button.svelte';
+  import SingleSelectList from './SingleSelectList/SingleSelectList.svelte';
 
   interface Props {
     /** Called when the user cancels (Escape, backdrop click, ×, or Cancel). */
@@ -32,20 +35,24 @@
 
   let profiles = $state<BundledProfileSummary[] | null>(null);
   let loadError = $state<string | null>(null);
-  let selectedStem = $state<string | null>(null);
+  let selectedStem = $state<string | undefined>(undefined);
   let submitting = $state(false);
   let submitError = $state<string | null>(null);
 
-  let profileSelect: HTMLSelectElement | undefined = $state();
+  let listContainer: HTMLDivElement | undefined = $state();
 
-  const canSubmit = $derived(selectedStem !== null && !submitting);
+  const canSubmit = $derived(selectedStem !== undefined && !submitting);
+  const profileItems = $derived((profiles ?? []).map((p) => ({ key: p.stem, disabled: submitting })));
+  const profileByStem = (stem: string) => profiles?.find((p) => p.stem === stem);
 
   async function loadProfiles() {
     try {
       const result = await listBundledProfiles();
       profiles = result;
-      if (result.length > 0 && selectedStem === null) {
+      if (result.length > 0 && selectedStem === undefined) {
         selectedStem = result[0].stem;
+        await tick();
+        listContainer?.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.focus();
       }
     } catch (err) {
       loadError = String(err);
@@ -53,7 +60,7 @@
   }
 
   async function handleSubmit() {
-    if (!canSubmit || selectedStem === null) return;
+    if (!canSubmit || selectedStem === undefined) return;
     submitting = true;
     submitError = null;
     try {
@@ -68,7 +75,6 @@
 
   onMount(() => {
     void loadProfiles();
-    profileSelect?.focus();
   });
 </script>
 
@@ -87,29 +93,32 @@
     class="abd-form"
     onsubmit={(e) => { e.preventDefault(); void handleSubmit(); }}
   >
-    <label class="abd-field">
+    <div class="abd-field" bind:this={listContainer}>
       <span class="abd-label">Board model</span>
       {#if loadError}
         <div class="abd-error">Failed to load profiles: {loadError}</div>
       {:else if profiles === null}
         <div class="abd-loading">Loading…</div>
-      {:else if profiles.length === 0}
-        <div class="abd-empty">No bundled board profiles are available.</div>
       {:else}
-        <select
-          bind:this={profileSelect}
-          bind:value={selectedStem}
-          class="abd-input"
-          disabled={submitting}
+        <SingleSelectList
+          items={profileItems}
+          bind:selectedKey={selectedStem}
+          ariaLabel="Board model"
+          name="board-model"
+          emptyMessage="No bundled board profiles are available."
         >
-          {#each profiles as profile (profile.stem)}
-            <option value={profile.stem}>
-              {profile.manufacturer} — {profile.model}
-            </option>
-          {/each}
-        </select>
+          {#snippet row(stem)}
+            {@const profile = profileByStem(stem)}
+            <span class="abd-choice">
+              <span class="abd-model">{profile?.model ?? stem}</span>
+              {#if profile}
+                <span class="abd-manufacturer">{profile.manufacturer}</span>
+              {/if}
+            </span>
+          {/snippet}
+        </SingleSelectList>
       {/if}
-    </label>
+    </div>
 
     {#if submitError}
       <div class="abd-error">{submitError}</div>
@@ -147,22 +156,20 @@
     color: var(--fluent-neutralForeground2);
     font-weight: 500;
   }
-  .abd-input {
-    padding: 6px 10px;
-    border: 1px solid var(--fluent-neutralStroke1);
-    border-radius: 4px;
-    background: var(--fluent-neutralBackground1);
+  .abd-choice {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .abd-model {
     color: var(--fluent-neutralForeground1);
-    font-family: var(--fluent-fontFamily);
     font-size: var(--fluent-fontSizeBase300);
   }
-  .abd-input:focus {
-    outline: none;
-    border-color: var(--fluent-strokeFocus2);
-    box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
+  .abd-manufacturer {
+    color: var(--fluent-neutralForeground3);
+    font-size: var(--fluent-fontSizeBase200);
   }
-  .abd-loading,
-  .abd-empty {
+  .abd-loading {
     color: var(--fluent-neutralForeground3);
     font-style: italic;
     padding: 6px 0;
