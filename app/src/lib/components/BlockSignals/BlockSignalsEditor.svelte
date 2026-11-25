@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
    * BlockSignalsEditor — the transient "New Automatic Block Signals" dialog.
-   * Blocks, Aspects, Appearance and Wiring are available; Review is listed but
-   * disabled. Done on Wiring is offered only when the store allows finishing.
+   * Its steps are Blocks, Aspects, Appearance and Wiring. Done on Wiring is
+   * offered only when the store allows finishing.
    *
-   * The shared look of both steps (panels, outlined choices, section labels,
+   * The shared look of the steps (panels, outlined choices, section labels,
    * two-choice selectors, tables) lives here, scoped under `.abs-editor`.
    */
   import type { SelectedDetectedBlock } from '$lib/api/signaling';
@@ -45,7 +45,6 @@
     aspects: 'Aspects',
     appearance: 'Appearance',
     wiring: 'Wiring',
-    review: 'Review',
   };
   const STEPS = $derived(view.steps.map((item) => ({ ...item, title: STEP_TITLE[item.id] })));
   const hasBlocks = $derived(view.blocks.length > 0);

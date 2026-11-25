@@ -20,10 +20,10 @@ import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
 import { previewRequestFromRecord } from '$lib/utils/blockSignalsPreviewRequest';
 
-export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring' | 'review';
+export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring';
 
-/** The editor's steps in order; Review is listed but deferred to a later release. */
-const STEP_ORDER: ReadonlyArray<BlockSignalsStep> = ['blocks', 'aspects', 'appearance', 'wiring', 'review'];
+/** The editor's steps in order. A Review step is deferred (E3r in specs/020-block-signals-first-slice/slices.md). */
+const STEP_ORDER: ReadonlyArray<BlockSignalsStep> = ['blocks', 'aspects', 'appearance', 'wiring'];
 
 /** How a step stands, derived from the facility's data rather than its position. */
 export type BlockSignalsStepStatus = 'complete' | 'needsWork' | 'todo' | 'unavailable';
@@ -158,7 +158,6 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   }
 
   private stepStatus(id: BlockSignalsStep, index: number): { status: BlockSignalsStepStatus; unavailableReason?: string } {
-    if (id === 'review') return { status: 'unavailable', unavailableReason: 'Not in this release' };
     if (id !== 'blocks' && this._blocks.length === 0) {
       return { status: 'unavailable', unavailableReason: 'Add a block first' };
     }

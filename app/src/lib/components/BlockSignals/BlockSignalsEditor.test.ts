@@ -17,17 +17,18 @@ describe('BlockSignalsEditor shell', () => {
     return copy.textContent?.replace(/^\d/, '').replace(/\s+/g, ' ').trim();
   });
 
-  it('lists the five steps with only Review disabled, and no "later" text', () => {
+  it('lists the four steps, all enabled, with no Review step and no "later" text', () => {
     const { stepper } = open('aspects');
     const buttons = within(stepper).getAllByRole('button');
-    expect(buttons.map((b) => (b as HTMLButtonElement).disabled)).toEqual([false, false, false, false, true]);
+    expect(buttons.map((b) => (b as HTMLButtonElement).disabled)).toEqual([false, false, false, false]);
+    expect(within(stepper).queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/later release/i);
   });
 
   it('shows every step of a saved facility as complete in its accessible name', () => {
     const { stepper } = open('blocks', { mode: 'edit' });
     expect(names(stepper)).toEqual([
-      'Blocks, complete', 'Aspects, complete', 'Appearance, complete', 'Wiring, complete', 'Review, not in this release',
+      'Blocks, complete', 'Aspects, complete', 'Appearance, complete', 'Wiring, complete',
     ]);
   });
 

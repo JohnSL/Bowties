@@ -36,12 +36,10 @@ export function previewWith(signals: SignalPreview[] = [SIGNAL]): BlockSignalsPr
   };
 }
 
-/** Step states for a view: every step but Review `complete` unless overridden. */
+/** Step states for a view: every step `complete` unless overridden. */
 export function stepsWith(overrides: Partial<Record<BlockSignalsStep, BlockSignalsStepStatus>> = {}): BlockSignalsStepState[] {
-  const ids: BlockSignalsStep[] = ['blocks', 'aspects', 'appearance', 'wiring', 'review'];
-  return ids.map((id) => id === 'review'
-    ? { id, status: 'unavailable', unavailableReason: 'Not in this release' }
-    : { id, status: overrides[id] ?? 'complete' });
+  const ids: BlockSignalsStep[] = ['blocks', 'aspects', 'appearance', 'wiring'];
+  return ids.map((id) => ({ id, status: overrides[id] ?? 'complete' }));
 }
 
 export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): BlockSignalsEditorView {

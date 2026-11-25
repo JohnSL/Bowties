@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 13/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5, E6); S2 and the old S3–S8 superseded by E1a–E6
+Status: 13/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5, E6); S2 and the old S3–S8 superseded by E1a–E6; E3r deferred 2026-11-25
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -94,9 +94,9 @@ flowchart LR
 | Core facilities document | No Line fields; `schemaVersion` "1.0" | Optional ABS record (blocks, direction, signals, claimed slots); "2.0" |
 | Core layout manifest | Version 4, exact match required | Version 5; accepts 4 to 5, rejects newer |
 | Backend signaling | Preview facts for the editor | Compose command: gathers node facts and calls the compiler |
-| Editor store and orchestrator | Blocks and Aspects preview | Five steps, scope gating, Wiring choices, edit mode; Done hands off to the facility orchestrator |
+| Editor store and orchestrator | Blocks and Aspects preview | Four steps (Review deferred), scope gating, Wiring choices, edit mode; Done hands off to the facility orchestrator |
 | Facility orchestrator | Composes Block Indicator facilities | Also composes and tears down ABS facilities |
-| Step components | BlocksStep, AspectsStep | Plus AppearanceStep, WiringStep, ReviewStep; out-of-scope options disabled |
+| Step components | BlocksStep, AspectsStep | Plus AppearanceStep, WiringStep (ReviewStep deferred); out-of-scope options disabled |
 | Existing writers (Save, Sync Panel) | Two writers; a connected Save writes only drafts copied while connected, and records acknowledgement | E3b: every Save records configuration as Pending Changes and one writer sends them; E4 adds readback to its row results |
 
 ### Behavior Summary
@@ -132,7 +132,7 @@ flowchart LR
 | E2c | Release pins used outside Bowties | HITL | E2b | done |
 | E3a | Board Logic planner | AFK | E3b-1 | done |
 | E3 | Two blocks on one board | HITL | E3a + same-board Approach evidence (passed) | done |
-| E3r | Review step | HITL | E3 | sketched |
+| E3r | Review step | HITL | E3 | deferred (2026-11-25) |
 | E3b-0 | One owner and one writer for Pending Changes | REFACTOR | E2c | done |
 | E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | done |
 | E3b-2 | Accept or keep a refused value | HITL | E4 | sketched |
@@ -1027,7 +1027,14 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 **Intent**: Before Done, Review shows what the facility will change on each board.
 **Boundary**: Editor store and steps (new `ReviewStep`) → compose result (edits, claims, placement, moves).
 **Blocked by**: E3.
-**Status**: sketched
+**Status**: deferred (2026-11-25, user)
+
+**Deferred (2026-11-25, user)**: Not yet convinced a Review page is needed. The step is removed from the editor's stepper, which now has four steps; Done stays on Wiring. Notes for when this is picked up again:
+- What no step shows today is what Done changes outside this facility: logic moved in another facility's groups, pins released from use outside Bowties, and every affected board. That is the case for a Review.
+- Per-field board changes are already visible after Done as Pending Changes (Config tab markers, Sync Panel), tagged with the facility.
+- Considered instead: change markers on edited items (a removed block leaves nothing to mark, and the marker would mean "changed since opening" while the Config tab's means "differs from the board"); a marker per step, which also covers removals; a confirmation at Done only when something outside the facility changes.
+
+The criteria below are the original plan, kept for reference.
 
 **Acceptance criteria**:
 - [ ] Review is enabled after Wiring and shows each signal's block, behavior, outputs, expected indications, affected configuration and claimed slots (FR-010); Done moves from Wiring to Review.

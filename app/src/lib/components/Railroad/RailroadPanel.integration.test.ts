@@ -217,7 +217,7 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
       // Restricting is outside this release's scope: offered, but not selectable
       expect(within(editor).getByRole('radio', { name: 'Restricting' })).toBeDisabled();
       expect(within(editor).getByRole('button', { name: 'Next: Appearance' })).toBeEnabled();
-      expect(within(editor).getByRole('button', { name: /^\d?\s*Review/ })).toBeDisabled();
+      expect(within(editor).queryByRole('button', { name: /^\d?\s*Review/ })).not.toBeInTheDocument();
       expect(within(editor).queryByRole('button', { name: /save|apply|confirm/i })).not.toBeInTheDocument();
     });
 
