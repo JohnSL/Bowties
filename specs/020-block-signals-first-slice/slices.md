@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 13/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5, E6); S2 and the old S3–S8 superseded by E1a–E6; E3r deferred 2026-11-25
+Status: 13/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5, E6); S2 and the old S3–S8 superseded by E1a–E6; E3r deferred 2026-11-25; E4, E3b-2 and F1 continue as a separate write-verification feature (spec.md 2026-11-25)
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)

@@ -162,9 +162,9 @@
     2. Reconcile with the Style Constraint Contract seam.
     3. When designed, restore an appropriate user-facing affordance (picker, row tooltip, and/or slot state) driven by the chosen mechanism.
 * Signaling UX — glossary gap in [product/glossary.md](../product/glossary.md)
-  * Root cause: **signal type**, **head**, **indication**, **aspect**, **section**, and **signalling system** are load-bearing terms in the [signaling UX charter](proposals/signaling-ux/goals-and-constraints.md) and [proposal](proposals/signaling-ux/signaling-ux-proposal.md) but have no glossary entries yet.
+  * Root cause: **signal type**, **head**, **section**, and **signalling system** are load-bearing terms in the [signaling UX charter](proposals/signaling-ux/goals-and-constraints.md) and [proposal](proposals/signaling-ux/signaling-ux-proposal.md) but have no glossary entries yet. (**Aspect** and **Indication** were added by Spec 020; **head** appears only as an _Avoid_ term under **Signal**.)
   * Follow-up:
-    1. Add glossary entries for the six terms before the proposal is treated as settled.
+    1. Add glossary entries for the four remaining terms before the proposal is treated as settled.
     2. Cross-reference the proposal §1 (signal type) and §4 (system-level terms).
 * Signaling UX — extract the Signal-LCC manual's ABS/APB worked examples
   * Root cause: the manual's section 9, pages 35–47, contains worked ABS and APB configuration examples that were skipped in `profile-extractions/signal-lcc/recipes.yaml`. This is the highest-value gap in the current Signal-LCC profile extraction.

@@ -91,7 +91,7 @@ These ownership rules prevent regressions that arise when lifecycle decisions ar
 **Phases (in order):**
 
 ```
-idle → opening_file → hydrating_snapshots → replaying_offline_changes → ready
+idle → opening_file → hydrating_snapshots → replaying_pending_changes → ready
                  ↘ error ↙ (from any phase)
 ```
 
@@ -100,7 +100,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 | `idle` | No open in progress |
 | `opening_file` | File picker dialog or recent-file restore in progress |
 | `hydrating_snapshots` | Loading captured node snapshots from the layout directory |
-| `replaying_offline_changes` | Replaying offline-changes.yaml onto tree state |
+| `replaying_pending_changes` | Replaying Pending Changes (offline-changes.yaml) onto tree state |
 | `ready` | Layout open and trees hydrated |
 | `error` | Open failed; reset to `idle` or retry |
 
@@ -108,7 +108,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 
 - `startLayoutOpen()` → `opening_file`
 - `startLayoutHydration()` → `hydrating_snapshots`
-- `finishLayoutHydration()` → `replaying_offline_changes`
+- `finishLayoutHydration()` → `replaying_pending_changes`
 - `finishOfflineReplay()` → `ready`
 - `failLayoutOpen()` → `error`
 - `resetLayoutOpenPhase()` → `idle`

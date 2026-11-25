@@ -123,7 +123,7 @@ Profile-declared mapping from a channel type's abstract states (e.g., occupied/c
 _Avoid_: event binding, event wiring (that's bowtie creation)
 
 **Railroad Tab**:
-The third (rightmost) tab in the main application view. Hosts the **Channels Panel** (hardware-organised list of every channel in the layout) and the **Facilities Section** (named instances of behavior templates). The home for layout-level railroad abstractions.
+The third (rightmost) tab in the main application view. Hosts the **Channels Panel** (hardware-organised list of every channel in the layout) and the **Facilities Section** (named instances of behavior templates; an **Automatic Block Signals** card draws a read-only **Track Diagram** with live occupancy). The home for layout-level railroad abstractions.
 _Avoid_: channel tab, inventory tab, layout tab (overloaded with "layout file")
 
 **Channels Panel**:
@@ -169,12 +169,24 @@ A declaration on a **Style** describing how its **Channel**s manage the CDI fiel
 _Avoid_: validity rules (the renderer mechanism; the contract is the source declaration), restrictions, locks, schema
 
 **Automatic Block Signals**:
-A **Facility** (Spec 020) that signals one or more existing detected blocks entered in travel order. Each block gets one entrance **Signal**. Its guided steps are Blocks, Aspects, Appearance, Wiring and Review. The facility compiles to Signal LCC configuration (mast, Rule to Aspect, conditionals) staged as **Pending Change**s. Code and older specs also call one instance a "Line".
+A **Facility** (Spec 020) that signals one or more existing detected blocks entered in travel order. Each block gets one entrance **Signal**. Its guided steps are Blocks, Aspects, Appearance and Wiring; Done on Wiring saves it (a Review step is deferred). The facility compiles to Signal LCC configuration (mast, Rule to Aspect, conditionals) staged as **Pending Change**s. Code and older specs also call one instance a "Line".
 _Avoid_: Signal Line (pre-S2R name), ABS system, signal wizard
 
 **Signal**:
 An entrance signal of an **Automatic Block Signals** facility. It has a stable identity, a name, the block it protects, and one `signal-indication` **Channel** for its outputs. It shows an **Aspect** chosen by its own block's occupancy and the next signal's Aspect.
 _Avoid_: mast (the Signal LCC CDI structure that realises a signal), head (one lamp group of a signal)
+
+**Protected Block**:
+A detected block a **Signal** watches: the block it enters plus any blocks joined to it in the facility's block list. Any protected block occupied means the signal shows Stop.
+_Avoid_: governed block, signal block (the signal's whole run, which may include protected blocks on another board)
+
+**Logic Placement**:
+Which Signal LCC Logic conditional slots each Bowties Logic group occupies on one board. A group is a run of consecutive slots ending in `Last (Single)`; one per-board planner keeps placed groups where they are, puts new groups in the lowest free run, and moves the fewest slots when a group must grow (ADR-0020). Moving another facility's group is part of placement, not a separate edit.
+_Avoid_: slot allocation, conditional numbering
+
+**Track Diagram**:
+The drawing of a facility's blocks in travel order, with joins, turnouts, the entrance and exit ends and each **Signal** at its position. The editor's Blocks, Aspects and Wiring steps draw it interactively; the **Railroad Tab** facility card draws the same diagram read-only, with live occupancy.
+_Avoid_: track plan, schematic
 
 **Aspect**:
 The meaning a **Signal** conveys to a train: Stop, Approach or Clear in the three-indication policy. Aspects are policy; the lamps lit for each aspect are its **Indication**.
