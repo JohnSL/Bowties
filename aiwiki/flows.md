@@ -161,7 +161,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Information Channel Inventory (Spec 015)
 - **Route:** `+page.svelte` — 3rd tab ("Railroad") in segmented control; renders `RailroadPanel`
-- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelsPanel.svelte` → `ChannelRow.svelte`; the panel also composes `FacilitiesSection.svelte` → `FacilityCard.svelte` → `FacilitySlot.svelte` → role-neutral `SlotCard.svelte`
+- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelsPanel.svelte` → `ChannelRow.svelte`; facilities render `PanelCard` or the ABS `FacilityCard`, without legacy slot pickers.
 - **Store:** `channels.svelte.ts` (`channelsStore` — hydrated on layout open, reset on close)
 - **API:** `channels.ts` (`listChannels`, `createChannels`, `renameChannel`, `deleteChannels`)
 - **Backend:** `commands/channels.rs` (`list_channels`, `create_channels`, `rename_channel`, `delete_channels`)
@@ -181,7 +181,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Component:** `RailroadPanel.svelte` computes `channelStates` via `$derived.by()` + passes to `ChannelCard` as `occupancyState` prop
 
 ## Automatic Block Signals (Spec 020)
-- **Entry:** `FacilitiesSection.svelte` lists the core-registered `automatic-block-signals` template (from `behaviorTemplatesStore`) beside Block Indicator and a disabled Interlocking Plant in the Add facility dialog. Selecting it opens the guided editor, named with the accepted Add facility name.
+- **Entry:** `FacilitiesSection.svelte` lists Automatic Block Signals beside Panel and a disabled Interlocking Plant. Selecting it opens the guided editor, named with the accepted Add facility name.
 - **Blocks:** `BlocksStep` lists detected blocks in travel order for the selected direction, with placeholder turnouts under the block that contains them and a row "⋯" menu (`RowMenu`) to join a block to the one above. Live occupancy comes from `FacilitiesSection` and shows as unavailable without a reading. Both directions and APB are disabled. End chips on the shared `TrackDiagram` open `EndChipMenu` ("Choose a Plant…" disabled). Add block opens `SelectBlockPicker` (`SearchableSingleSelectDialog`).
 - **Aspects / Appearance:** `AspectsStep` selects a signal and shows settings (out-of-scope choices disabled) and the backend's rules; `AppearanceStep` shows the fixed RG searchlight appearance (always lit) with other choices disabled.
 - **Wiring:** `WiringStep` picks the Signal LCC ("Runs on", `SearchableSingleSelectDialog`), the red pin and the green pin from `preview.outputHosts`; when wiring is complete the orchestrator runs `composeBlockSignals` (zero writes, generation-guarded, wiring node's unsaved edits in the request) and shows blocking issues ("Choices needing attention"). The editor has four steps; a Review step is deferred (slices.md E3r), so Done sits on Wiring.
@@ -193,8 +193,15 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Railroad card diagram:** `FacilitiesSection` `$effect` → `facilityDiagramOrchestrator.sync(facilities)` (inside `untrack`) fetches `previewBlockSignals` for each new or changed ABS record (request built by `utils/blockSignalsPreviewRequest.ts`, the same builder the editor's `startEdit` uses) into `facilityDiagramsStore`; `FacilityCard` draws `TrackDiagram` in summary mode with occupancy from `blockOccupancyMap`. Reset on layout change via `layoutScopedParticipants`.
 - **Facts and policy:** `app/src-tauri/src/signaling/mod.rs` (preview) and `compose.rs` (compose) read the effective layout and configuration; `bowties-core/src/signaling/chain.rs` derives signals and rules; `compiler.rs` compiles the terminal recipe; `slots.rs` finds free masts/Logic and resolves CDI paths.
 
+## Legacy Block Indicator Conversion (Spec 021 S5)
+- **Core read:** `layout/io.rs::read_layout_capture` normalizes references, then `layout/panel_migration.rs::migrate` converts the aggregate without compiling or allocating events. `LayoutState::from_loaded` receives the result.
+- **Listings:** Tauri `list_facilities` / `list_channels` return the saved converted `LayoutState` projection; open/list expose the optional conversion summary.
+- **Lifecycle:** `offlineLayoutOrchestrator` calls `facilitiesStore.beginOpen` after successful open. `facilitiesStore` counts its migration marker in the existing facility dirty bucket; `saveLayoutOrchestrated` acknowledges after successful Save. Discard keeps panels; an equivalent reload stays acknowledged, actual reopen starts conversion again.
+- **Consumers:** `+page.svelte` shows counts and explicit warning toasts once per open; Railroad renders existing Panel cards, Save and close use the aggregate dirty breakdown, and Bowties retains old names. Conversion creates no configuration drafts or Sync work.
+- **Retirement:** Block Indicator composer/API/IPC, slot picker components and route handlers are gone. Panel/ABS transactions, cascade membership detach and manual bowtie editing remain.
+
 ## Panel (Spec 021)
-- **Entry:** `FacilitiesSection.svelte` lists the core `panel` template in Add facility (Block Indicator stays until S5). Confirming a name → `panelEditorActions.startPanelEditor(name)`; nothing is created until Done.
+- **Entry:** `FacilitiesSection.svelte` lists the core `panel` template in Add facility. Block Indicator is migration input only. Confirming a name → `panelEditorActions.startPanelEditor(name)`; nothing is created until Done.
 - **Blocks:** `Panel/BlocksStep` adds detected blocks one at a time from `effectiveLayoutStore.detectedBlocks` (grouped by detector `board`, `facility` as context); duplicates blocked by the store; × removes. Next works with zero blocks.
 - **Wiring:** `goTo('wiring')` → `facilityOrchestrator.syncDraftsForComposition` → `panelWiringFacts()` (backend `app/src-tauri/src/panel/mod.rs` over the effective layout: Signal LCC hosts from `signaling::proposal_facts_from_layout`, owners attributed by core `attribute_output_facilities` incl. panel Direct Lamp rows). `Panel/WiringStep` pin clicks → `panelEditorOrchestrator.pinClick` → `utils/pinSeat.ts` (a pin another entry holds is not choosable). An outside pin sets `pendingRelease`; confirming → `confirmRelease` → `releaseAndSeat` (`utils/releasedOwners.ts`) and facts re-fetched with `release`, so the released pin reads free (S4).
 - **Done:** `finish()` → `facilityOrchestrator.createPanelFacility` → staging transaction: sync drafts → `composePanel` (core `panel/compiler.rs`: row keep/allocate, Lamp Selection/On/Off/Description, issues) → stage nothing on issues → lamp channels (`lampRow`) + `addFacility` + `setPanelRecord` + attach to `lamps` + config edits with `{facilityId}`; any throw rolls back.

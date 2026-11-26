@@ -2,6 +2,14 @@
 
 Coupling risks, depth assessments, and architecture debt discovered during feature work. This file grows incrementally — add entries as issues are found.
 
+## Canonical conversion versus persistence acknowledgement (2026-11-26)
+
+- **Area**: core layout read, Tauri inventory listings, facilities store and dirty aggregation (Spec 021 S5).
+- **Risk prevented**: independent raw inventory reads could restore retired indicators/names after open; treating conversion as compiler drafts could add unintended Sync work; acknowledging Discard could be undone by an equivalent list reload.
+- **Resolution**: one normalized/converted core aggregate seeds `LayoutState`; inventory commands return that saved projection. Facilities owns one per-open persistence marker, counted through the existing aggregate facility bucket. Save success/Discard acknowledge it; actual reopen starts it again. Migration preserves node configuration/events and manual bowtie names.
+- **Evidence**: `panel_migration_load.rs`, canonical listing inline test, real migration Railroad/Save/close and route notice/Bowties tests. Old composer and slot-picker pipelines are removed, while Panel/ABS staging stays green.
+- **Remaining verification**: running-app comparison and physical lamp bench behavior are caller-owned and pending, not inferred from automated tests. No new protocol emit sites or `lcc-rs` changes.
+
 ## Format
 
 Each entry:

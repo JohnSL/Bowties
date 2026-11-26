@@ -13,12 +13,6 @@
     <circle cx="28" cy="21" r="4" fill="#3b3f45" stroke="#888" />
     <circle cx="40" cy="21" r="4" fill="#ffb900" />
   </svg>
-{:else if templateId === 'block-indicator'}
-  <svg class="facility-type-icon" viewBox="0 0 56 42" aria-hidden="true">
-    <line x1="3" y1="21" x2="21" y2="21" stroke="#56606d" stroke-width="2" />
-    <line x1="35" y1="21" x2="53" y2="21" stroke="#56606d" stroke-width="2" />
-    <circle cx="28" cy="21" r="6" fill="#c50f1f" stroke="#20242a" stroke-width="2" />
-  </svg>
 {:else if templateId === 'automatic-block-signals'}
   <svg class="facility-type-icon" viewBox="0 0 56 42" aria-hidden="true">
     <line x1="3" y1="28" x2="53" y2="28" stroke="#56606d" stroke-width="2" />

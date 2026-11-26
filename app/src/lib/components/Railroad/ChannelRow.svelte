@@ -17,14 +17,9 @@
     'signal-indication': 'Signal',
   };
 
-  /**
-   * Spec 018 / S5 — lamp-indicator info-tooltip text. Made discoverable on
-   * every consumer row to satisfy AC #5 (D5 deferral: the user must set Lamp
-   * Selection manually before the lamp will follow the bowtie's commands).
-   */
   const LAMP_INDICATOR_TOOLTIP =
     'Live state is derived from observed Lamp On / Lamp Off commands on the bus. ' +
-    'Set Lamp Selection on this row in the Config tab to drive the lamp.';
+    'Panel wiring sets the pin; converted layouts keep the saved Lamp Selection.';
 
   const STATE_TOOLTIPS: Record<string, string> = {
     'no-config': 'No configuration data — channel cannot resolve event IDs yet.',

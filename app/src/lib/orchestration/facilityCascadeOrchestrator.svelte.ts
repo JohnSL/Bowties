@@ -7,24 +7,15 @@
  *
  *   1. Every facility slot binding pointing at the lost channel is
  *      detached via `facilitiesStore.detachChannel`.
- *   2. If a facility transitioned Wired → Incomplete as a result of
- *      those detaches, its composed bowties are torn down via
- *      `facilityOrchestrator.tearDownFacilityBowties`.
+ * Configuration and bowtie metadata are untouched: Panel and ABS changes
+ * are compiled only through their explicit editor/removal workflows.
  *
- * All effects are staged in the draft layer (per ADR-0012 extension —
- * cascade side effects appear next to their trigger, atomic on Save,
- * revertable on Discard). No IPC calls fire from here directly; the
- * detach + teardown side effects flow through the normal store draft
- * pipeline. User-owned channel losses via `removeFromSlot` do not
- * re-trigger this cascade because the detach they cause is already
- * inside the same draft transaction (diff-based mechanism handles
- * this naturally).
+ * Detaches are draft-layer changes, atomic on Save and revertable on
+ * Discard. Already detached memberships do not produce another delta.
  */
 
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
-import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
-import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
 
 class FacilityCascadeOrchestrator {
   /** IDs of channels observed at the last synchronization point. */
@@ -124,46 +115,29 @@ class FacilityCascadeOrchestrator {
   }
 
   /**
-   * Detach every facility slot binding referencing an id in `lostIds` and
-   * tear down the composed bowties of any facility that transitioned
-   * Wired → Incomplete as a result. Shared by the reactive `_reconcile`
+   * Detach every facility slot binding referencing an id in `lostIds`.
+   * Shared by the reactive `_reconcile`
    * path (runtime channel loss) and `reconcileDanglingChannelRefsOnLoad`
    * (load-time repair of orphan references).
    */
   private _cascadeDetach(lostIds: ReadonlySet<string>): void {
     // Collect (facilityId, slotLabel, channelId) triples to detach.
     const detachTargets: Array<{ facilityId: string; slotLabel: string; channelId: string }> = [];
-    const affectedFacilities = new Set<string>();
     for (const facility of facilitiesStore.facilities) {
       for (const [slotLabel, ids] of Object.entries(facility.slotBindings)) {
         for (const id of ids) {
           if (lostIds.has(id)) {
             detachTargets.push({ facilityId: facility.facilityId, slotLabel, channelId: id });
-            affectedFacilities.add(facility.facilityId);
           }
         }
       }
     }
     if (detachTargets.length === 0) return;
 
-    // Snapshot which facilities were Wired BEFORE the detaches so we can
-    // decide who needs teardown afterwards.
-    const wiredBefore = new Set(
-      [...affectedFacilities].filter((id) => effectiveLayoutStore.facilityStatus(id) === 'Wired'),
-    );
-
     for (const t of detachTargets) {
       facilitiesStore.detachChannel(t.facilityId, t.slotLabel, t.channelId);
     }
 
-    // For every facility that transitioned Wired → Incomplete, tear down
-    // its composed bowties. Fire-and-forget: teardown is idempotent and its
-    // side effects are all draft-layer.
-    for (const facilityId of affectedFacilities) {
-      if (!wiredBefore.has(facilityId)) continue;
-      if (effectiveLayoutStore.facilityStatus(facilityId) === 'Wired') continue;
-      void facilityOrchestrator.tearDownFacilityBowties(facilityId);
-    }
   }
 }
 

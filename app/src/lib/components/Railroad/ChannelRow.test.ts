@@ -39,6 +39,15 @@ const tree: NodeConfigTree = {
   segments: [],
 };
 
+it('describes Panel pin assignment instead of the retired manual Add-channel step', () => {
+  render(ChannelRow, { channel: {
+    ...channel, role: 'lamp-indicator', style: 'single-led-direct-lamp', ownership: 'user-owned',
+    binding: { kind: 'lampRow', nodeKey: '020157000001', rowOrdinal: 1 },
+  } });
+  expect(screen.getByTitle(/Panel wiring sets the pin/)).toBeInTheDocument();
+  expect(screen.queryByTitle(/Set Lamp Selection on this row in the Config tab/)).not.toBeInTheDocument();
+});
+
 describe('ChannelRow configuration navigation', () => {
   it('navigates a resolved channel location through configFocusStore', async () => {
     render(ChannelRow, {

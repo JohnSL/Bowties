@@ -22,6 +22,7 @@ pub mod known_layouts;
 pub mod manifest;
 pub mod node_snapshot;
 pub mod pending_changes;
+pub mod panel_migration;
 pub mod serde_node_id;
 pub mod state;
 pub mod types;
@@ -158,11 +159,7 @@ pub fn update_facilities(
 /// Returns an empty `FacilitiesDocument` when the file does not exist
 /// (pre-018 layouts), matching the backward-compatibility rule.
 pub fn read_facilities(layout_dir: &Path) -> Result<facilities::FacilitiesDocument, String> {
-    let path = layout_dir.join(io::FACILITIES_FILE);
-    if !path.exists() {
-        return Ok(facilities::FacilitiesDocument::default());
-    }
-    io::read_yaml_file(&path)
+    read_capture(layout_dir).map(|loaded| loaded.facilities)
 }
 
 /// Write the given node snapshots into the layout directory.
@@ -611,12 +608,12 @@ mod tests {
 
         let loaded = read_capture(&layout_dir).unwrap();
         // Dangling binding removed from the in-memory facility.
-        let out_bindings = &loaded.facilities.facilities[0].slot_bindings["output"];
+        let out_bindings = &loaded.facilities.facilities[0].slot_bindings["lamps"];
         assert!(out_bindings.is_empty(), "dangling output binding was not cleared: {:?}", out_bindings);
         // Valid binding preserved.
         assert_eq!(
-            loaded.facilities.facilities[0].slot_bindings["input"],
-            vec!["ch-real".to_string()]
+            loaded.facilities.facilities[0].panel.as_ref().unwrap().entries[0].block_id,
+            "ch-real"
         );
         // Warning surfaced to the caller.
         assert_eq!(loaded.load_warnings.len(), 1);

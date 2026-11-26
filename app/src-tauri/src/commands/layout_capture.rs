@@ -58,6 +58,7 @@ pub struct OpenLayoutResult {
     /// `channels.yaml`). The frontend surfaces these as a toast on
     /// open; the cleaned documents reach disk on the next save.
     pub load_warnings: Vec<String>,
+    pub panel_migration: Option<bowties_core::layout::panel_migration::PanelMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,6 +580,7 @@ pub async fn save_layout_directory(
             *layout_state.bowties_mut() = write_data.bowties.clone();
             layout_state.set_pending_changes(write_data.pending_changes.clone());
             layout_state.clear_drafts();
+            layout_state.acknowledge_panel_migration();
             layout_state.clear_discovered_roles();
         }
     }
@@ -1009,6 +1011,7 @@ pub async fn open_layout_directory(
         node_snapshots: loaded.node_snapshots,
         recovery_occurred: loaded.recovery_occurred,
         load_warnings: loaded.load_warnings,
+        panel_migration: loaded.panel_migration,
     })
 }
 

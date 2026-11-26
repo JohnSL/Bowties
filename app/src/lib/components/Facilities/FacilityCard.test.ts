@@ -27,29 +27,23 @@ const { behaviorTemplatesStore } = await import('$lib/stores/behaviorTemplates.s
 const { channelsStore } = await import('$lib/stores/channels.svelte');
 const FacilityCard = (await import('./FacilityCard.svelte')).default;
 
-const BLOCK_INDICATOR: BehaviorTemplate = {
-  templateId: 'block-indicator',
-  displayName: 'Block Indicator',
-  slots: [
-    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-    { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
-  ],
-  mapping: [
-    { producerState: 'occupied', consumerCommand: 'lit' },
-    { producerState: 'clear', consumerCommand: 'unlit' },
-  ],
+const SUPPORTED_TEMPLATE: BehaviorTemplate = {
+  templateId: 'automatic-block-signals',
+  displayName: 'Automatic Block Signals',
+  slots: [{ label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 1, maxChannels: null }],
+  mapping: [],
 };
 
 beforeEach(async () => {
   channelsStore.reset();
   facilitiesStore.reset();
   behaviorTemplatesStore.reset();
-  listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
+  listBehaviorTemplatesMock.mockResolvedValue([SUPPORTED_TEMPLATE]);
   await behaviorTemplatesStore.loadBehaviorTemplates();
 });
 
 function facility(id: string, slots: Record<string, string[]>): Facility {
-  return { facilityId: id, templateId: 'block-indicator', name: 'Block 5', slotBindings: slots };
+  return { facilityId: id, templateId: 'automatic-block-signals', name: 'Mainline', slotBindings: { signals: slots.output ?? [] } };
 }
 
 describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
@@ -57,7 +51,7 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     const f = facility('f-1', { input: ['ch-bod-1'], output: [] });
     facilitiesStore.hydrateBaseline([f]);
     const spy = vi.spyOn(effectiveLayoutStore, 'facilityStatus');
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    render(FacilityCard, { props: { facility: f, template: SUPPORTED_TEMPLATE } });
     expect(screen.getByText(/^Incomplete$/)).toBeInTheDocument();
     expect(spy).toHaveBeenCalledWith('f-1');
     spy.mockRestore();
@@ -67,7 +61,7 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     const f = facility('f-1', { input: ['ch-bod-1'], output: ['ch-lamp-2'] });
     facilitiesStore.hydrateBaseline([f]);
     const spy = vi.spyOn(effectiveLayoutStore, 'facilityStatus');
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    render(FacilityCard, { props: { facility: f, template: SUPPORTED_TEMPLATE } });
     expect(screen.getByText(/^Wired$/)).toBeInTheDocument();
     expect(spy).toHaveBeenCalledWith('f-1');
     spy.mockRestore();
@@ -79,32 +73,10 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     // Force the facade to claim the facility is Wired even though its slots
     // are empty; the card must reflect what the facade says.
     vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    render(FacilityCard, { props: { facility: f, template: SUPPORTED_TEMPLATE } });
     expect(screen.getByText(/^Wired$/)).toBeInTheDocument();
   });
 
-  it('renders a Signal LCC channel with its node and paired output labels', () => {
-    const signalChannel: InformationChannel = {
-      id: 'ch-signal-1',
-      name: 'Eastbound signal',
-      role: 'signal-indication',
-      style: 'signal-lcc-rg',
-      ownership: 'hardware-owned',
-      binding: {
-        kind: 'signalLccRgOutputs',
-        nodeKey: '0501010114a1',
-        greenOutput: 1,
-        redOutput: 3,
-      },
-    };
-    const f = facility('f-signal', { input: [], output: [signalChannel.id] });
-    channelsStore.hydrateBaseline([signalChannel]);
-    facilitiesStore.hydrateBaseline([f]);
-
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
-
-    expect(screen.getByText(/Signal LCC RG Outputs · Node 0501010114a1 · Outputs 1 \/ 3/)).toBeInTheDocument();
-  });
 });
 
 describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
@@ -153,15 +125,6 @@ describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
     expect(onEdit).toHaveBeenCalledWith('f-abs');
   });
 
-  it('offers no Edit on a Block Indicator card', () => {
-    const f = facility('f-1', { input: [], output: [] });
-    facilitiesStore.hydrateBaseline([f]);
-
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR, onEdit: vi.fn() } });
-
-    expect(screen.queryByRole('button', { name: 'Edit facility' })).toBeNull();
-  });
-
   it('offers no Add channel picker when the signals slot is empty', () => {
     const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [] } };
     facilitiesStore.hydrateBaseline([f]);
@@ -188,7 +151,7 @@ describe('FacilityCard write outcome (Spec 020 / E5-T4)', () => {
       row('3', '05.02.01.02.03.01', 'pending'),
     ]);
 
-    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    render(FacilityCard, { props: { facility: f, template: SUPPORTED_TEMPLATE } });
 
     expect(screen.queryByText(/^Wired$/)).toBeNull();
     expect(screen.getByText(/^Waiting$/)).toBeInTheDocument();

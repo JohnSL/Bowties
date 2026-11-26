@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 4/6
+Status: 5/6
 
 ## Architecture
 
@@ -92,7 +92,7 @@ flowchart LR
 | S2 | Panel card and channel usage | AFK | S1 | done |
 | S3 | Blocks step and "lit when" | AFK | S1 | done |
 | S4 | Edit, release and remove | HITL | S1 | done |
-| S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | sketched |
+| S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | done |
 | S6 | Route all layout imports through the facade | REFACTOR | S5 | sketched |
 
 ### S1: One-board panel, end to end [HITL]
@@ -277,18 +277,158 @@ flowchart LR
 **Boundary**: Route → facilities store → API → backend open/list → core single facilities read and migration
 **Re-cut after S1**: migrated lamps keep their row and hand-set Lamp Selection (D1); a migrated row with Lamp Selection 0 is a lamp with no pin and should show as needing a pin. Block Indicator is still offered in Add facility until this slice. Re-check the two backlog Lamp Selection items afterwards.
 **Blocked by**: S1 + S2
-**Status**: sketched
+**Status**: done
 
 **Acceptance criteria**:
-- [ ] A 0.4.x layout with Block Indicators on two boards opens as two panels named after the boards, blocks in the old order, lamps named after the old facilities.
-- [ ] A Block Indicator with a block but no lamp goes into one "Indicators without a lamp" panel, shown as Incomplete. One with no block is dropped.
-- [ ] A notice says how many Block Indicators became how many panels.
-- [ ] The Save toolbar and the close prompt show unsaved changes. Discard keeps the panels. Nothing waits in the Sync Panel, and the lamps still follow occupancy.
-- [ ] Add facility no longer offers Block Indicator.
-- [ ] The old bowtie names still appear on the Bowties tab.
-- [ ] A layout without Block Indicators opens unchanged and isn't marked changed.
+- [x] A 0.4.x layout with Block Indicators on two boards opens as two panels named after the boards, blocks in the old order, lamps named after the old facilities.
+- [x] A Block Indicator with a block but no lamp goes into one "Indicators without a lamp" panel, shown as Incomplete. One with no block is dropped.
+- [x] A notice says how many Block Indicators became how many panels.
+- [x] The Save toolbar and the close prompt show unsaved changes. Discard keeps the panels. Nothing waits in the Sync Panel, and the lamps still follow occupancy.
+- [x] Add facility no longer offers Block Indicator.
+- [x] The old bowtie names still appear on the Bowties tab.
+- [x] A layout without Block Indicators opens unchanged and isn't marked changed.
 
 **Architecture note** *(HITL, seam change)*: One facilities read serves both open and list (F1). The migrated document is the baseline, with a "needs save" flag as a new input to the Dirty Aggregation seam (F2). Block Indicator bowtie composition, the slot pickers and their route handlers are deleted (F4).
+
+**Re-cut 2026-11-26**: current reads normalize references but do not migrate; `list_facilities` reads separately. Migration must cover channels and bowtie metadata as well as facilities so old lamp names and bowtie names survive. The current Block Indicator template maps occupied to lit and clear to unlit, so the panel's Occupied default preserves that behavior without event edits. Discard acknowledgement and malformed/duplicate legacy-record handling require explicit HITL approval; no first-wins or record-dropping policy is already approved.
+
+**UI contract**: [mockups.html#migration](mockups.html#migration) (section 8, grouping and unchanged events), [mockups.html#railroad](mockups.html#railroad) (existing Panel cards), and the existing app notification, Save toolbar and close-dialog primitives. Spec precedence: the lamp-less group is named "Indicators without a lamp", rather than the mockup's illustrative "Unassigned lamps panel". Conversion is automatic, not a wizard or confirmation dialog.
+
+**Complexity**: large
+**User stories**: US4 (migration scenarios 1-5), FR-030, FR-031, FR-032
+
+**Decisions approved (2026-11-26, user: "Proceed")**:
+- D1 (A): core owns one canonical converted read; the facilities store owns the per-open migration persistence lifecycle, contributing through the aggregate dirty owner. Failed Save retains the marker; successful Save clears it; Discard acknowledges it for the open session while keeping converted panels; reopening unchanged legacy disk data reports conversion again.
+- D2 (A): core layout conversion owns fidelity and retirement. Retain channel identities, bindings and events, source order, former facility lamp names and old bowtie metadata names; remove retired facility backlinks and runtime composition/slot UI. Malformed records are reported explicitly rather than truncated; same-panel duplicate block/lamp collisions keep the first accepted entry and warn. Cross-panel block sharing remains valid.
+
+**Tasks**:
+- [x] S5-T1: Integration tests first: opening a legacy layout reaches Railroad Panel cards and a conversion notice; Save and close show migration as unsaved, Discard retains converted panels, Sync has no migration writes, and old bowtie names remain visible. Rust load integration proves two-board grouping, order, lamp names/identity/events and no configuration edits.
+- [x] S5-T2: Core layout migration: pure, idempotent conversion after reference normalization, using the approved fidelity/invalid-record policy; summary and explicit diagnostics; retain lamp bindings and events, preserve bowtie metadata names and clear retired facility backlinks.
+- [x] S5-T3: Core read ownership and Tauri boundaries: one migrated aggregate serves open and listing and seeds authoritative LayoutState; propagate the conversion outcome without creating configuration drafts or board-write work.
+- [x] S5-T4: Facilities store and layout facade: approved per-open migration lifecycle contributes through Dirty Aggregation; Save success/failure, equivalent rehydration, Discard, reset and reopen have focused regression coverage.
+- [x] S5-T5: UI and orchestration retirement: present conversion notice through the existing notification surface; remove Block Indicator creation/composition, IPC/API registrations, slot pickers and route handlers, preserving Panel/ABS staging and manual bowtie names. Rewrite or remove only tests exclusive to retired behavior.
+- [x] S5-T6: Enrichment: update relevant product behavior/ADRs, aiwiki owners/flows/seams and check backlog; keep S6 facade-import cleanup out of S5.
+- [x] S5-T7: Validate the baseline-relative changed-file surface, core/app aggregate tests and frontend tests/diagnostics per testing strategy; compare the running migration/Railroad/Save/Discard/close workflow with the UI contract. Record runtime or bench blockers and keep acceptance pending where unverified.
+
+**S5 implementation checkpoint (2026-11-26; fallback worker, no subagents)**:
+
+Baseline: branch `021-panel-facility`, clean except the caller's S5 task/approval edits in this file, preserved. Work stops at S5. Status remains **tasked**, completion remains **4/6**, and all visual/bench acceptance remains pending for the caller. No architecture/issue investigation was repeated; no formatter, commit or dependency installation was run.
+
+**Sequential TDD audit.** Working directories below: **C** = `bowties-core`, **A** = `app`, **T** = `app\src-tauri`, all under the verified Bowties root. Each numbered behavior completed its focused observed RED → minimum GREEN → affected suite before the next behavior. Scope was checked using `git status --short`/`git diff --stat` after each batch. The focused RED commands were rerun green; affected suites are recorded in the last column.
+
+| # | Behavior / observed RED | Exact RED command | GREEN + affected suite |
+|---|---|---|---|
+| 1 | Canonical legacy read: `legacy runtime facilities must be converted` | C: `cargo test --test panel_migration_load` | Focused green; `cargo test --lib layout:: --quiet` (211 passed); migration/Panel roundtrips green. |
+| 2 | Malformed binding + first accepted duplicates: accepted count 3, expected 2 | C: `cargo test --test panel_migration_load malformed --quiet` | Focused green; `cargo test --test panel_migration_load --test panel_layout_roundtrip --quiet`; layout suite 211 passed. |
+| 3 | Canonical backend listing contract missing (`From<&LayoutState>` / `panel_migration`, E0308/E0609) | T: `cargo test --lib commands::facilities::tests --quiet` | Focused 1 passed; `cargo test --lib commands::layout_capture --quiet` (3 passed). |
+| 4 | Migration reaches real Railroad/Save/close consumers: Save group missing | A: `npm test -- --reporter=dot src\lib\components\Railroad\RailroadPanel.migration.integration.test.ts` | Focused green; with `src\lib\stores\facilities.svelte.test.ts src\lib\layout\dirtyAggregate.integration.test.ts` (37 passed). Discard retains cards; equivalent reload stays acknowledged. |
+| 5 | Save acknowledgement: dirty remained true after successful Save | A: `npm test -- --reporter=dot src\lib\components\Railroad\RailroadPanel.migration.integration.test.ts -t 'failed Save'` | Focused green; migration + `src\lib\orchestration\saveLayoutOrchestrator.test.ts src\lib\stores\facilities.svelte.test.ts` (69 passed). Failed Save retains marker. |
+| 6 | Actual reopen: acknowledged legacy data stayed clean (false, expected true) | A: `npm test -- --reporter=dot src\lib\components\Railroad\RailroadPanel.migration.integration.test.ts -t 'opens converted'` | Focused green; migration + `src\lib\orchestration\offlineLayoutOrchestrator.test.ts src\lib\orchestration\layoutLifecycleOrchestrator.test.ts` (38 passed). |
+| 7 | Real page/toast consumer: conversion count notice missing | A: `npm test -- --reporter=dot src\routes\page.migration.integration.test.ts` | Focused green; page migration + `src\routes\page.route.test.ts` + Railroad migration (23 passed). Explicit warning toast and real window-close prompt exercised. |
+| 8 | Registry retirement: 3 templates, expected 2 | C: `cargo test --lib behavior_templates::tests::registry_retires --quiet` | Focused green; library 549 passed; Panel/migration/ABS roundtrips green. |
+| 9 | Retired IPC still depended on deleted core composer (`unresolved import bowties_core::facility_bowties`) | T: `cargo test --lib commands::facilities::tests --quiet` | Compile/focused green; `cargo test --lib signaling:: --quiet` (8 passed). |
+| 10 | Retired frontend public workflow still exported (`selectChannelForSlot must be retired`) | A: `npm test -- --reporter=dot src\lib\orchestration\facilityOrchestrator.retirement.test.ts` | Focused green; retirement/page/Panel/ABS walks (33 passed); shared orchestrator/Facilities/Railroad/page affected suite (127 passed). Removed only legacy-exclusive tests; preserved ABS/Panel staging/removal and repointed shared card/cascade tests. |
+| 11 | Malformed facility identity: accepted count 2, expected 1 | C: `cargo test --test panel_migration_load malformed_identity --quiet` | Focused green; migration + Panel roundtrips (3 each), layout suite 211 passed. Empty/colliding IDs warn/drop; surviving facility backlinks remain. |
+| 12 | Retired manual Add-channel tooltip still displayed; Panel wording missing | A: `npm test -- --reporter=dot src\lib\components\Railroad\ChannelRow.test.ts -t 'describes Panel'` | Focused green; ChannelRow + migration consumers (7 passed). |
+| 13 | Malformed legacy wire record rejected the whole read (`slotBindings: invalid`, expected map) | C: `cargo test --test panel_migration_load malformed_legacy_wire --quiet` | Focused green; migration load 4 passed, Panel roundtrip 3 passed, layout suite 211 passed; final core aggregate green. Identifiable malformed retired records warn/drop while valid records load; malformed supported records still fail explicitly. |
+
+Harness corrections (not counted as RED): initial malformed tests were accidentally nested and discovered zero tests; moved to top level before observing the expected failures. Toast tests needed a browser `Element.animate` boundary stub; dialog/button/tab queries were corrected to the existing accessible roles/names. Supplemental board-name/node-event-byte and Bowties-tab name preservation assertions were added after the original integration green, not represented as separately observed REDs.
+
+**Bounded refactor audit:** facilities draft clearing now has one `_clearDrafts` implementation; redundant identity collision derivation removed; conversion diagnostics have one owner (`PanelMigration.warnings`, not duplicated in `load_warnings`); stale retired API mocks/comments removed without changing supported workflows. Core `clear_backlinks` is shared by typed and rejected-wire legacy records. Late narrow tooltip/wire-record cycles followed the initial cleanup, before finishing the final aggregate; no second delegated refactor or formatter was run. Post-refactor focused frontend suite: 8 files / 149 tests passed; final stale-mock cleanup: `npm test -- --reporter=dot src\lib\orchestration\blockSignalsEditorOrchestrator.test.ts src\lib\components\Facilities\signalsAcrossBoards.integration.test.ts src\lib\components\Facilities\facilityMaintenance.integration.test.ts` (34 passed).
+
+**Final aggregate/diagnostic evidence:**
+- C: `cargo test --quiet` — **549 library + 112 integration tests passed**, one doc test ignored; rerun after the wire decoder/backlink helper completed.
+- A: `npm test -- --reporter=dot` — **152 files / 1907 tests passed**.
+- T: `cargo test --lib --quiet` — **146 passed, 2 known baseline failures**: `events::router::tests::discovered_event_serializes_node_id_as_canonical_string` and `profile::loader::tests::bundled_shared_daughterboard_library_parses_phase_four_rules`. Not repaired.
+- A: `npm run check`, then final `npx svelte-check --tsconfig .\tsconfig.json --output machine` — **112 errors / 2 warnings**, versus supplied baseline 113/2; no new diagnostics in the S5 production/new test files.
+- C: `cargo clippy --lib --message-format short` — passed. `cargo clippy --lib --tests --message-format short` remains blocked by pre-existing approximate-PI errors at `node_tree.rs:2798` and `:3131`; no new migration finding.
+- T: `cargo clippy --lib --message-format short` — passed with existing warnings, including unchanged `layout_capture.rs` needless borrow.
+- `git diff --check` — passed. Native Git warns that the touched route's LF will be converted to CRLF; no formatter was run.
+- Rust aggregate/affected reruns scoped `TEMP`/`TMP` to the crate's repository-local `target`; newly authored load fixtures are repository-local and cleaned. Nothing was executed in a reference repository.
+
+**Baseline-relative file surface (M modified, A new, D deleted):**
+```text
+M aiwiki\architecture-health.md
+M aiwiki\flows.md
+M aiwiki\owners.md
+M aiwiki\seams.md
+M app\src-tauri\src\commands\channels.rs
+M app\src-tauri\src\commands\facilities.rs
+D app\src-tauri\src\commands\facility_bowties.rs
+M app\src-tauri\src\commands\layout_capture.rs
+M app\src-tauri\src\commands\mod.rs
+M app\src-tauri\src\lib.rs
+M app\src-tauri\src\signaling\mod.rs
+M app\src\lib\api\facilities.ts
+D app\src\lib\api\facilityBowties.test.ts
+D app\src\lib\api\facilityBowties.ts
+M app\src\lib\api\layout.ts
+D app\src\lib\components\Facilities\AddChannelPicker.svelte
+M app\src\lib\components\Facilities\FacilitiesSection.svelte
+D app\src\lib\components\Facilities\FacilityCard.navigation.test.ts
+M app\src\lib\components\Facilities\FacilityCard.svelte
+M app\src\lib\components\Facilities\FacilityCard.test.ts
+D app\src\lib\components\Facilities\FacilitySlot.svelte
+M app\src\lib\components\Facilities\FacilityTypeIcon.svelte
+D app\src\lib\components\Facilities\SelectChannelPicker.svelte
+D app\src\lib\components\Facilities\SelectChannelPicker.test.ts
+D app\src\lib\components\Facilities\SlotCard.svelte
+D app\src\lib\components\Facilities\SlotCard.test.ts
+D app\src\lib\components\Facilities\addChannel.integration.test.ts
+M app\src\lib\components\Facilities\facilityMaintenance.integration.test.ts
+D app\src\lib\components\Facilities\selectChannel.integration.test.ts
+M app\src\lib\components\Facilities\signalsAcrossBoards.integration.test.ts
+D app\src\lib\components\Facilities\wired.integration.test.ts
+M app\src\lib\components\Railroad\ChannelRow.svelte
+M app\src\lib\components\Railroad\ChannelRow.test.ts
+A app\src\lib\components\Railroad\RailroadPanel.migration.integration.test.ts
+M app\src\lib\components\Railroad\RailroadPanel.svelte
+M app\src\lib\orchestration\blockSignalsEditorOrchestrator.test.ts
+M app\src\lib\orchestration\facilityCascadeOrchestrator.svelte.test.ts
+M app\src\lib\orchestration\facilityCascadeOrchestrator.svelte.ts
+A app\src\lib\orchestration\facilityOrchestrator.retirement.test.ts
+M app\src\lib\orchestration\facilityOrchestrator.test.ts
+M app\src\lib\orchestration\facilityOrchestrator.ts
+M app\src\lib\orchestration\offlineLayoutOrchestrator.ts
+M app\src\lib\orchestration\saveLayoutOrchestrator.ts
+M app\src\lib\stores\facilities.svelte.ts
+M app\src\routes\+page.svelte
+A app\src\routes\page.migration.integration.test.ts
+M bowties-core\src\behavior_templates.rs
+D bowties-core\src\facility_bowties\mod.rs
+M bowties-core\src\layout\facilities.rs
+M bowties-core\src\layout\io.rs
+M bowties-core\src\layout\mod.rs
+A bowties-core\src\layout\panel_migration.rs
+M bowties-core\src\layout\state.rs
+M bowties-core\src\lib.rs
+M bowties-core\src\signaling\facts.rs
+M bowties-core\tests\block_signals_layout_roundtrip.rs
+M bowties-core\tests\panel_layout_roundtrip.rs
+A bowties-core\tests\panel_migration_load.rs
+M docs\user\using.md
+M product\architecture\adr\0012-all-layout-edits-draft-layer.md
+M product\architecture\adr\0013-channel-role-style-ownership.md
+M product\architecture\adr\0015-backend-layout-state-single-owner.md
+M product\glossary.md
+M product\user-stories\offline-capture-edit-sync.md
+M specs\021-panel-facility\slices.md
+M specs\backlog.md
+```
+
+Necessary narrow surface additions: `signaling/facts.rs` and app `signaling/mod.rs` each update one read-data test literal for the new summary field; ABS roundtrip/shared tests preserve supported coverage after retirement; cascade and ChannelRow cleanup remove direct retired dependencies/manual-step presentation. No `lcc-rs`, dependency/configuration, or S6 facade-import cleanup changes. Backlog canonical-list routing and obsolete lamp-picker prerequisite/eligibility work removed; manual bowtie deletion remains independent.
+
+**Caller-owned remaining acceptance:** compare the running UI with `mockups.html#migration` (678–715), `#railroad`, existing notification/Save/close primitives. Check two-board names/order, lamp-less Incomplete card, explicit invalid/duplicate warnings, Save failure/success, Discard retaining panels and actual legacy reopen re-dirtying. On a Signal LCC, verify existing occupancy lamps still work without conversion writes and a saved Lamp Selection 0 stays an honestly unwired lamp. No runtime session or physical bench was used by this worker; do not mark S5 done or visually accepted on automated evidence alone.
+
+**Caller validation (2026-11-26)**:
+- Baseline-relative 66-file set matches the worker's reported surface, including the narrow test-literal and retired ChannelRow/cascade dependencies documented above. Sequential RED/GREEN audit checked; no S6 or protocol-library changes.
+- `bowties-core`: `cargo test --quiet` passed (661 tests; one doc test ignored).
+- `app`: `npm test -- --reporter=dot` passed (152 files, 1907 tests); `npm run build` passed.
+- `app\src-tauri`: `cargo test --lib --quiet` reproduced 146 passed and the same two known baseline failures in event Node ID serialization and daughterboard profile rules.
+- `app`: `npm run check` reproduced 112 errors / 2 warnings (existing diagnostic backlog; supplied baseline 113/2). `git diff --check` passed.
+- Runtime blocker: no running Bowties frontend session was available on the existing preview ports for browser validation, and no native/bench session was provided. Visual and hardware acceptance remains pending; S5 stays `tasked` and S6 remains blocked. Passing tests/build do not substitute for that acceptance.
+
+**Acceptance (2026-11-26)**: user confirmed "Acceptance passes." This closes the pending running-app and bench acceptance above. S5 is done; progress is 5/6. S6 is unblocked, with its existing boundary and acceptance criteria unchanged; tasking remains deferred until S6 starts.
 
 ### S6: Route all layout imports through the facade [REFACTOR]
 
@@ -302,4 +442,4 @@ flowchart LR
 - [ ] A guard test fails if a route or component imports an edit-layer store directly.
 - [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
 
-<!-- Session: 2026-11-26 — S1, S2, S3, S4 done. Next: S5 (HITL). -->
+<!-- Session: 2026-11-26 — S1-S5 done, including user acceptance of S5. Next: S6 (REFACTOR), unblocked and sketched. -->

@@ -371,6 +371,7 @@ mod tests {
             channels: ChannelsDocument::default(),
             facilities: FacilitiesDocument::default(),
             load_warnings: Vec::new(),
+            panel_migration: None,
         };
         let mut state = LayoutState::from_loaded(PathBuf::from("/tmp"), loaded, HashMap::new(), HashMap::new());
         state.set_config_tree(NodeKey::parse(NODE).unwrap(), active_mast_tree());

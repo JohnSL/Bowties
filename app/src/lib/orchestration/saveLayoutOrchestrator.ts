@@ -20,6 +20,7 @@ import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
 import type { SaveLayoutResult, SaveWithBusWriteResult, SaveWriteCounts, OfflineNodeSnapshot } from '$lib/api/layout';
 import type { ActiveLayoutContext } from '$lib/stores/layout.svelte';
 import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
 
 export interface SaveLayoutOrchestratedArgs {
   // ── Online path ─────────────────────────────────────────────────────────
@@ -219,6 +220,7 @@ export async function saveLayoutOrchestrated({
   // 5. Clear pending state
   clearMetadata();
   markClean();
+  facilitiesStore.acknowledgeMigration();
 
   // 5b. The backend committed the written values to its trees. Reload those
   //     trees before the drafts go, so no field falls back to its old value.

@@ -133,7 +133,7 @@ _Avoid_: channel inventory (pre-018 surface, retired), channel list, hardware pa
 ## Facilities System
 
 **Facility**:
-A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility adds no sync or deployment machinery of its own: its effect on hardware is ordinary **Pending Change**s that ride Save (ADR-0001). Block Indicator is a UI veneer over bowties. **Automatic Block Signals** (Spec 020) and **Panel** (Spec 021) also persist their own record in the facility (ABS: ordered blocks and signals; Panel: ordered entries and "lit when"). Their **Claimed Resource**s are derived from the record and slots, never stored.
+A named, persisted instance of a **Behavior Template**, carrying intent and typed channel membership in `facilities.yaml`. Current kinds are **Automatic Block Signals** (ordered blocks and signals) and **Panel** (ordered entries and "lit when"). Their **Claimed Resource**s and status are derived from the record, slots and effective configuration. Their effects are ordinary configuration edits and **Pending Change**s that ride Save (ADR-0001); facilities add no separate sync/deployment machinery. Block Indicator is a retired kind accepted only during automatic load conversion to Panel, preserving its existing event connections.
 _Avoid_: arrangement, signal, device, behavior, automation (these describe future template families; "facility" is the generic noun)
 
 **Panel**:
@@ -141,7 +141,7 @@ A **Facility** for one physical panel or fascia (Spec 021). It holds an ordered 
 _Avoid_: indicator panel, mimic (as a type name), Block Indicator (for the new facility)
 
 **Behavior Template**:
-A declared template for a **Facility**. Carries a stable template ID, display name, ordered list of slot declarations (each with a slot label, producer/consumer designation, and required **Role**), and a mapping from producer-side semantic states to consumer-side commands. The first template is **Block Indicator** (`occupied → lit`, `clear → unlit`). Hardcoded in `bowties-core/src/behavior_templates/` in Spec 018; future declarative YAML loader is Future Considerations.
+A declared template for a **Facility** with a stable ID, display name and typed slot declarations. The registered Panel and Automatic Block Signals templates compile their intent into configuration edits and have empty bowtie state mappings. The retired Block Indicator mapping (`occupied → lit`, `clear → unlit`) survives as the conversion default, not a runtime composer. Registry: `bowties-core/src/behavior_templates.rs`.
 _Avoid_: template (alone — ambiguous with structure profile), scenario, recipe (recipes are profile-level), preset
 
 **Facility Slot**:

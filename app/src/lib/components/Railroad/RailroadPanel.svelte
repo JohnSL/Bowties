@@ -10,9 +10,6 @@
     resolvedEventIds,
     daughterboardName,
     usedBy,
-    onSelectChannel,
-    onAddChannel,
-    onRemoveFromSlot,
     nodeTree,
   }: {
     nodeName: (nodeKey: string) => string;
@@ -33,11 +30,6 @@
      * column (Spec 018 / S4). Pass-through to `ChannelsPanel`.
      */
     usedBy?: (channelId: string) => ReadonlyArray<{ facilityName: string; slotLabel: string }>;
-    /** Spec 018 / S4 — slot-binding intent emitters; pass-through to `FacilitiesSection`. */
-    onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
-    onAddChannel?: (facilityId: string, slotLabel: string) => void;
-    onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 </script>
@@ -45,9 +37,6 @@
 <div class="railroad-panel" data-testid="railroad-panel">
   <FacilitiesSection
     {resolvedEventIds}
-    {onSelectChannel}
-    {onAddChannel}
-    {onRemoveFromSlot}
     {nodeTree}
   />
   <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} {nodeTree} />

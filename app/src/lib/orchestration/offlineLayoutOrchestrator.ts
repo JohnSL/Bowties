@@ -8,6 +8,7 @@ import { buildBowtieCatalog } from '$lib/api/bowties';
 import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import {
   failLayoutOpen,
   finishLayoutHydration,
@@ -387,6 +388,7 @@ export async function openOfflineLayoutWithReplay({
   try {
     const result = await openLayout(path);
 
+    facilitiesStore.beginOpen(result.panelMigration ?? null);
     resetSidebar();
     startLayoutHydration();
     await hydrateOfflineSnapshots(result.nodeSnapshots);

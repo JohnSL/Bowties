@@ -66,44 +66,6 @@ pub struct BehaviorTemplate {
     pub mapping: &'static [StateMapping],
 }
 
-const BLOCK_INDICATOR_SLOTS: &[SlotDefinition] = &[
-    SlotDefinition {
-        label: "input",
-        display_label: "block",
-        kind: SlotKind::Producer,
-        required_role: "block-occupancy",
-        min_channels: 1,
-        max_channels: Some(1),
-    },
-    SlotDefinition {
-        label: "output",
-        display_label: "indicator",
-        kind: SlotKind::Consumer,
-        required_role: "lamp-indicator",
-        min_channels: 1,
-        max_channels: Some(1),
-    },
-];
-
-const BLOCK_INDICATOR_MAPPING: &[StateMapping] = &[
-    StateMapping {
-        producer_state: "occupied",
-        consumer_command: "lit",
-    },
-    StateMapping {
-        producer_state: "clear",
-        consumer_command: "unlit",
-    },
-];
-
-/// The Block Indicator template — the only template registered in this slice.
-pub const BLOCK_INDICATOR: BehaviorTemplate = BehaviorTemplate {
-    template_id: "block-indicator",
-    display_name: "Block Indicator",
-    slots: BLOCK_INDICATOR_SLOTS,
-    mapping: BLOCK_INDICATOR_MAPPING,
-};
-
 const AUTOMATIC_BLOCK_SIGNALS_SLOTS: &[SlotDefinition] = &[SlotDefinition {
     label: "signals",
     display_label: "signals",
@@ -142,7 +104,7 @@ pub const PANEL: BehaviorTemplate = BehaviorTemplate {
     mapping: &[],
 };
 
-const REGISTRY: &[BehaviorTemplate] = &[BLOCK_INDICATOR, AUTOMATIC_BLOCK_SIGNALS, PANEL];
+const REGISTRY: &[BehaviorTemplate] = &[AUTOMATIC_BLOCK_SIGNALS, PANEL];
 
 /// All registered templates.
 pub fn registered_templates() -> &'static [BehaviorTemplate] {
@@ -174,11 +136,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_contains_block_indicator() {
+    fn registry_retires_block_indicator_and_preserves_abs_and_panel() {
         let templates = registered_templates();
-        assert_eq!(templates.len(), 3);
-        assert_eq!(templates[0].template_id, "block-indicator");
-        assert_eq!(templates[0].display_name, "Block Indicator");
+        assert_eq!(templates.len(), 2);
+        assert!(find_template("block-indicator").is_none());
         let abs = find_template("automatic-block-signals").expect("ABS registered");
         assert_eq!(abs.display_name, "Automatic Block Signals");
         let signals = abs.find_slot("signals").expect("signals slot");
@@ -186,7 +147,6 @@ mod tests {
         assert_eq!(signals.max_channels, None);
         assert!(abs.mapping.is_empty());
         assert!(!abs.composes_bowties());
-        assert!(BLOCK_INDICATOR.composes_bowties());
     }
 
     #[test]
@@ -204,55 +164,22 @@ mod tests {
     }
 
     #[test]
-    fn block_indicator_has_input_and_output_slots() {
-        let labels: Vec<&str> = BLOCK_INDICATOR.slots.iter().map(|s| s.label).collect();
-        assert_eq!(labels, vec!["input", "output"]);
-
-        let input = &BLOCK_INDICATOR.slots[0];
-        assert_eq!(input.kind, SlotKind::Producer);
-        assert_eq!(input.required_role, "block-occupancy");
-
-        let output = &BLOCK_INDICATOR.slots[1];
-        assert_eq!(output.kind, SlotKind::Consumer);
-        assert_eq!(output.required_role, "lamp-indicator");
-    }
-
-    #[test]
-    fn block_indicator_mapping_is_pass_through() {
-        let mapping = BLOCK_INDICATOR.mapping;
-        assert_eq!(mapping.len(), 2);
-        assert_eq!(mapping[0].producer_state, "occupied");
-        assert_eq!(mapping[0].consumer_command, "lit");
-        assert_eq!(mapping[1].producer_state, "clear");
-        assert_eq!(mapping[1].consumer_command, "unlit");
-    }
-
-    #[test]
     fn find_template_resolves_by_id_and_misses_unknown() {
-        assert!(find_template("block-indicator").is_some());
+        assert!(find_template("panel").is_some());
         assert!(find_template("nope").is_none());
     }
 
     #[test]
     fn behavior_template_serialises_to_camel_case_json() {
-        let json = serde_json::to_value(&BLOCK_INDICATOR).unwrap();
-        assert_eq!(json["templateId"], "block-indicator");
-        assert_eq!(json["displayName"], "Block Indicator");
-        assert_eq!(json["slots"][0]["label"], "input");
-        assert_eq!(json["slots"][0]["kind"], "producer");
-        assert_eq!(json["slots"][0]["requiredRole"], "block-occupancy");
-        assert_eq!(json["slots"][0]["minChannels"], 1);
-        assert_eq!(json["slots"][0]["maxChannels"], 1);
-        assert_eq!(json["mapping"][0]["producerState"], "occupied");
-        assert_eq!(json["mapping"][0]["consumerCommand"], "lit");
-    }
-
-    #[test]
-    fn block_indicator_slot_cardinality_is_one_to_one() {
-        for slot in BLOCK_INDICATOR.slots {
-            assert_eq!(slot.min_channels, 1);
-            assert_eq!(slot.max_channels, Some(1));
-        }
+        let json = serde_json::to_value(&PANEL).unwrap();
+        assert_eq!(json["templateId"], "panel");
+        assert_eq!(json["displayName"], "Panel");
+        assert_eq!(json["slots"][0]["label"], "lamps");
+        assert_eq!(json["slots"][0]["kind"], "consumer");
+        assert_eq!(json["slots"][0]["requiredRole"], "lamp-indicator");
+        assert_eq!(json["slots"][0]["minChannels"], 0);
+        assert!(json["slots"][0]["maxChannels"].is_null());
+        assert_eq!(json["mapping"], serde_json::json!([]));
     }
 
     #[test]
@@ -284,8 +211,7 @@ mod tests {
 
     #[test]
     fn find_slot_returns_slot_by_label_or_none() {
-        assert_eq!(BLOCK_INDICATOR.find_slot("input").map(|s| s.label), Some("input"));
-        assert_eq!(BLOCK_INDICATOR.find_slot("output").map(|s| s.label), Some("output"));
-        assert!(BLOCK_INDICATOR.find_slot("nope").is_none());
+        assert_eq!(PANEL.find_slot("lamps").map(|s| s.label), Some("lamps"));
+        assert!(PANEL.find_slot("nope").is_none());
     }
 }

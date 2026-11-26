@@ -31,16 +31,9 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
 
   let {
     resolvedEventIds,
-    onSelectChannel,
-    onAddChannel,
-    onRemoveFromSlot,
     nodeTree,
   }: {
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
-    onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
-    onAddChannel?: (facilityId: string, slotLabel: string) => void;
-    onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
@@ -125,7 +118,6 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
 
   // One-line descriptions shown under each facility type in Add facility.
   const FACILITY_DESCRIPTIONS: Record<string, string> = {
-    'block-indicator': "A panel light that follows one block's occupancy.",
     'automatic-block-signals': 'Signals that respond to occupancy, the next signal, and hand-thrown turnouts.',
     [PANEL_TEMPLATE_ID]: 'Lamps on a fascia or control panel that show which blocks are occupied.',
   };
@@ -203,14 +195,9 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
           <FacilityCard
             {facility}
             template={templateFor(facility.templateId)}
-            {resolvedEventIds}
             onRename={handleRename}
             onEdit={startEditBlockSignalsEditor}
             onDelete={handleDelete}
-            {onSelectChannel}
-            {onAddChannel}
-            {onRemoveFromSlot}
-            {nodeTree}
             diagram={facilityDiagramsStore.get(facility.facilityId)}
             occupancy={blockOccupancy}
           />

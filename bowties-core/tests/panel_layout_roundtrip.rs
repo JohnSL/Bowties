@@ -19,7 +19,7 @@ use bowties_core::layout::types::{LayoutEditDelta, LayoutFile};
 const NODE: &str = "050101010700";
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("bowties_panel_it_{name}_{}", std::process::id()));
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!("bowties_panel_it_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -148,9 +148,10 @@ fn manifest_versions_4_5_and_6_open_and_older_facilities_files_stay_readable() {
         write_layout_with_manifest_version(&dir, version);
         let read = read_layout_capture(&dir).unwrap();
         assert_eq!(read.manifest.schema_version, version);
-        assert_eq!(read.facilities.schema_version, "2.0");
-        assert_eq!(read.facilities.facilities[0].name, "Old");
-        assert_eq!(read.facilities.facilities[0].panel, None);
+        assert_eq!(read.facilities.schema_version, "3.0");
+        assert!(read.facilities.facilities.is_empty());
+        assert!(read.panel_migration.as_ref().unwrap().warnings[0].contains("Old"));
+        assert!(read.panel_migration.is_some());
     }
 }
 

@@ -181,7 +181,7 @@ fn write_v4_layout(dir: &PathBuf) {
     .unwrap();
     std::fs::write(
         dir.join("facilities.yaml"),
-        "schemaVersion: \"1.0\"\nfacilities:\n  - facilityId: f1\n    templateId: block-indicator\n    name: Old\n    slotBindings: {}\n",
+        "schemaVersion: \"1.0\"\nfacilities:\n  - facilityId: f1\n    templateId: panel\n    name: Old\n    slotBindings: {}\n",
     )
     .unwrap();
 }

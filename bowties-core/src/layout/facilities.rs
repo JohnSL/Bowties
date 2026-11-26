@@ -325,7 +325,7 @@ impl std::error::Error for FacilityApplyError {}
 /// reference so the caller can surface the cleanup to the user.
 ///
 /// This runs at read time so every backend consumer of the effective
-/// layout view (`compose_facility_bowties`, catalog rebuild, sync) sees
+/// layout view (Panel/ABS composition, catalog rebuild, sync) sees
 /// a referentially-consistent shape. Without this normalization the
 /// composer's `UnknownChannel` error, the cardinality guard's
 /// slot-binding count, and the "Used by" render path each treat a
@@ -862,78 +862,72 @@ facilities: []
 
     // ── attach / detach (S4 — D8 cardinality) ────────────────────────────
 
+    fn panel_with_empty_lamps() -> Facility {
+        Facility {
+            template_id: "panel".into(),
+            slot_bindings: BTreeMap::from([("lamps".into(), vec![])]),
+            ..block_indicator_with_empty_slots("id-1", "Panel")
+        }
+    }
+
     #[test]
     fn apply_attach_appends_channel_to_empty_slot() {
-        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let f = panel_with_empty_lamps();
         let mut doc = FacilitiesDocument::new(vec![f]);
         apply_facility_deltas(
             &mut doc,
             &[LayoutEditDelta::AttachChannelToSlot {
                 facility_id: "id-1".into(),
-                slot_label: "input".into(),
+                slot_label: "lamps".into(),
                 channel_id: "ch-1".into(),
             }],
         )
         .unwrap();
         assert_eq!(
-            doc.facilities[0].slot_bindings.get("input"),
+            doc.facilities[0].slot_bindings.get("lamps"),
             Some(&vec!["ch-1".to_string()])
         );
     }
 
     #[test]
-    fn apply_attach_at_max_is_rejected() {
-        let mut f = block_indicator_with_empty_slots("id-1", "Block 5");
+    fn apply_attach_to_panel_is_unbounded() {
+        let mut f = panel_with_empty_lamps();
         f.slot_bindings
-            .insert("input".to_string(), vec!["ch-1".to_string()]);
+            .insert("lamps".to_string(), vec!["ch-1".to_string()]);
         let mut doc = FacilitiesDocument::new(vec![f]);
-        let err = apply_facility_deltas(
+        apply_facility_deltas(
             &mut doc,
             &[LayoutEditDelta::AttachChannelToSlot {
                 facility_id: "id-1".into(),
-                slot_label: "input".into(),
+                slot_label: "lamps".into(),
                 channel_id: "ch-2".into(),
             }],
-        )
-        .unwrap_err();
-        match err {
-            FacilityApplyError::SlotAtMax {
-                facility_id,
-                slot_label,
-                max_channels,
-            } => {
-                assert_eq!(facility_id, "id-1");
-                assert_eq!(slot_label, "input");
-                assert_eq!(max_channels, 1);
-            }
-            other => panic!("expected SlotAtMax, got {:?}", other),
-        }
-        // Document untouched.
+        ).unwrap();
         assert_eq!(
-            doc.facilities[0].slot_bindings.get("input"),
-            Some(&vec!["ch-1".to_string()])
+            doc.facilities[0].slot_bindings.get("lamps"),
+            Some(&vec!["ch-1".to_string(), "ch-2".to_string()])
         );
     }
 
     #[test]
     fn apply_attach_same_channel_twice_is_idempotent() {
-        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let f = panel_with_empty_lamps();
         let mut doc = FacilitiesDocument::new(vec![f]);
         let deltas = [
             LayoutEditDelta::AttachChannelToSlot {
                 facility_id: "id-1".into(),
-                slot_label: "input".into(),
+                slot_label: "lamps".into(),
                 channel_id: "ch-1".into(),
             },
             LayoutEditDelta::AttachChannelToSlot {
                 facility_id: "id-1".into(),
-                slot_label: "input".into(),
+                slot_label: "lamps".into(),
                 channel_id: "ch-1".into(),
             },
         ];
         apply_facility_deltas(&mut doc, &deltas).unwrap();
         assert_eq!(
-            doc.facilities[0].slot_bindings.get("input"),
+            doc.facilities[0].slot_bindings.get("lamps"),
             Some(&vec!["ch-1".to_string()])
         );
     }
@@ -994,7 +988,7 @@ facilities: []
     fn apply_attach_to_unknown_slot_is_an_error() {
         // The slot is unknown because the template doesn't define it,
         // even though the bindings map happens to seed it via or_default.
-        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let f = panel_with_empty_lamps();
         let mut doc = FacilitiesDocument::new(vec![f]);
         let err = apply_facility_deltas(
             &mut doc,

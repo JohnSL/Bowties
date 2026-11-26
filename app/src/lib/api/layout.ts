@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
 import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
+import type { PanelMigration } from '$lib/api/facilities';
 
 export interface CaptureSummary {
   capturedAt: string;
@@ -50,6 +51,7 @@ export interface OpenLayoutResult {
    * cleaned in-memory documents reach disk on the next save.
    */
   loadWarnings: string[];
+  panelMigration?: PanelMigration | null;
 }
 
 export interface SnapshotLeafValue {
@@ -166,7 +168,7 @@ export interface ConfigDraftEdit {
  * merged reads. Idempotent w.r.t. any given delta set; callers send
  * the *complete* current delta set on every sync.
  *
- * Used by the facility bowtie composition path (`composeFacilityBowties`),
+ * Used by Panel and Automatic Block Signals preview/composition,
  * which reads facility + channel state through `LayoutState.effective_*`.
  */
 export async function syncLayoutDrafts(

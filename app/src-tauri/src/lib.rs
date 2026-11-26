@@ -445,7 +445,6 @@ pub fn run() {
             panel_wiring_facts,
             compose_panel,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
-            commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
             commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState
             commands::clear_layout_drafts,         // Spec 018 / S6 bugfix: drop LayoutState drafts on Discard / after Save
             commands::channel_events::resolve_channel_event_ids,  // Spec 016 / S1: batch event ID resolution

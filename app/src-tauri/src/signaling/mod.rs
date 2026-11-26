@@ -412,6 +412,7 @@ pub(crate) mod tests {
                 channels: ChannelsDocument::new(channels),
                 facilities,
                 load_warnings: vec![],
+                panel_migration: None,
             },
             Default::default(),
             Default::default(),

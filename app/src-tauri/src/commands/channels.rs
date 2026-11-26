@@ -9,25 +9,14 @@
 
 use bowties_core::layout::channels::InformationChannel;
 use crate::state::AppState;
-use std::path::Path;
 
 /// List all information channels for the currently active layout.
 ///
-/// Reads `channels.yaml` from the active layout directory via the
-/// intent-shaped `read_channels` API (ADR-0005). Returns an empty vec
-/// when no layout is open or the file is missing (pre-015 layouts).
+/// Uses the canonical saved aggregate, including migrated lamp names.
 #[tauri::command]
 pub async fn list_channels(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<InformationChannel>, String> {
-    let active = state.active_layout.read().await;
-    let Some(context) = active.as_ref() else {
-        return Ok(Vec::new());
-    };
-    if context.root_path.is_empty() {
-        return Ok(Vec::new());
-    }
-    let layout_dir = Path::new(&context.root_path);
-    let doc = bowties_core::layout::read_channels(layout_dir)?;
-    Ok(doc.channels)
+    let layout = state.layout_state.read().await;
+    Ok(layout.as_ref().map(|l| l.channels().channels.clone()).unwrap_or_default())
 }

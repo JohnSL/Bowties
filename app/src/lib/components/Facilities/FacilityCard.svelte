@@ -1,53 +1,28 @@
 <script lang="ts">
   import type { Facility, FacilityStatus } from '$lib/api/facilities';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
-  import { channelsStore } from '$lib/stores/channels.svelte';
-  import { eventStateStore } from '$lib/stores/eventState.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
-  import { configFocusStore } from '$lib/stores/configFocus.svelte';
-  import { resolveConfigTargets, type ConfigTarget } from '$lib/utils/channelConfigNavigation';
-  import type { NodeConfigTree } from '$lib/types/nodeTree';
-  import {
-    deriveChannelState,
-    channelStateLabel,
-    roleForChannelState,
-    type ChannelState,
-  } from '$lib/utils/channelState';
   import TrackDiagram from '$lib/components/BlockSignals/TrackDiagram.svelte';
   import { trackInputFor } from '$lib/components/BlockSignals/trackInput';
   import type { BlockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
   import type { FacilityDiagramEntry } from '$lib/stores/facilityDiagrams.svelte';
-  import FacilitySlot from './FacilitySlot.svelte';
   import WriteOutcomeList from './WriteOutcomeList.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
   let {
     facility,
     template,
-    resolvedEventIds,
     onRename,
     onEdit,
     onDelete,
-    onSelectChannel,
-    onAddChannel,
-    onRemoveFromSlot,
-    nodeTree,
     diagram,
     occupancy,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
-    /** Map from channelId to state-name → eventId (Spec 018 / S5 D6). */
-    resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onRename?: (facilityId: string, newName: string) => void;
     onEdit?: (facilityId: string) => void;
     onDelete?: (facilityId: string) => void;
-    /** Spec 018 / S4 — producer-side input slot's Select channel intent. */
-    onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    /** Spec 018 / S5 — consumer-side output slot's Add channel intent. */
-    onAddChannel?: (facilityId: string, slotLabel: string) => void;
-    onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
-    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
     /** Backend preview state for an Automatic Block Signals card's track diagram. */
     diagram?: FacilityDiagramEntry;
     occupancy?: BlockOccupancyMap;
@@ -96,80 +71,6 @@
     onDelete?.(facility.facilityId);
   }
 
-  function slotsOrdered(): Array<[string, string[]]> {
-    if (template) {
-      return template.slots.map((s) => [s.label, facility.slotBindings[s.label] ?? []]);
-    }
-    return Object.entries(facility.slotBindings);
-  }
-
-  function formatConnectorLabel(connectorId: string): string {
-    const match = connectorId.match(/^connector-([a-z])$/i);
-    if (match) return `Connector ${match[1].toUpperCase()}`;
-    return connectorId;
-  }
-
-  function configTargetsFor(binding: string[]): ConfigTarget[] | undefined {
-    const channel = channelsStore.channels.find((candidate) => candidate.id === binding[0]);
-    if (!channel) return undefined;
-    const targets = resolveConfigTargets(channel, nodeTree?.(channel.binding.nodeKey));
-    return targets.length > 0 ? targets : undefined;
-  }
-
-  function handleConfigTargetClick(target: ConfigTarget) {
-    configFocusStore.focusConfigField(target.nodeId, target.elementPath);
-  }
-
-  /**
-   * Resolve the FacilitySlot filled-state display from the channel id.
-   * UI is max-1 in S4: we pick element 0 of the Vec, leaving multi-binding
-   * rendering to a future slice when ABS aspect-slot repeaters arrive.
-   */
-  function displayFor(binding: string[]):
-    | { currentChannelId: string; currentChannelDisplay: { name: string; ownership: 'hardware-owned' | 'user-owned'; groupLabel: string; locationLabel: string; state: ChannelState; stateLabel: string } }
-    | { currentChannelId: undefined; currentChannelDisplay: undefined } {
-    if (binding.length === 0) {
-      return { currentChannelId: undefined, currentChannelDisplay: undefined };
-    }
-    const id = binding[0];
-    const channel = channelsStore.channels.find((c) => c.id === id);
-    if (!channel) {
-      return { currentChannelId: undefined, currentChannelDisplay: undefined };
-    }
-    const ids = resolvedEventIds?.get(id);
-    const role = roleForChannelState(channel.role);
-    const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
-    const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
-    const state = deriveChannelState(eventStateStore.events, positiveId, negativeId, role);
-    let groupLabel: string;
-    let locationLabel: string;
-    switch (channel.binding.kind) {
-      case 'connectorInput':
-        groupLabel = formatConnectorLabel(channel.binding.connector);
-        locationLabel = `Input ${channel.binding.input}`;
-        break;
-      case 'lampRow':
-        groupLabel = 'Direct Lamp Control';
-        locationLabel = `Row ${channel.binding.rowOrdinal}`;
-        break;
-      case 'signalLccRgOutputs':
-        groupLabel = 'Signal LCC RG Outputs';
-        locationLabel =
-          `Node ${channel.binding.nodeKey} · Outputs ${channel.binding.greenOutput} / ${channel.binding.redOutput}`;
-        break;
-    }
-    return {
-      currentChannelId: id,
-      currentChannelDisplay: {
-        name: channel.name,
-        ownership: channel.ownership,
-        groupLabel,
-        locationLabel,
-        state,
-        stateLabel: channelStateLabel(state),
-      },
-    };
-  }
 </script>
 
 <article class="facility-card" data-testid="facility-card" data-facility-id={facility.facilityId}>
@@ -218,26 +119,6 @@
     {:else}
       <p class="diagram-note">Drawing the track…</p>
     {/if}
-  {:else}
-  <div class="slot-grid">
-    {#each slotsOrdered() as [label, binding], i (label)}
-      {@const d = displayFor(binding)}
-      {#if i > 0}
-        <span class="slot-arrow" aria-hidden="true">→</span>
-      {/if}
-      <FacilitySlot
-        slotLabel={label}
-        {template}
-        currentChannelId={d.currentChannelId}
-        currentChannelDisplay={d.currentChannelDisplay}
-        onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
-        onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
-        onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
-        configTargets={configTargetsFor(binding)}
-        onConfigTargetClick={handleConfigTargetClick}
-      />
-    {/each}
-  </div>
   {/if}
 </article>
 
@@ -306,27 +187,9 @@
   .btn-link.danger {
     color: #b91c1c;
   }
-  .slot-grid {
-    display: grid;
-    grid-template-columns: 1fr 28px 1fr;
-    align-items: stretch;
-    gap: 0.5rem;
-  }
   .diagram-note {
     margin: 0;
     font-size: 0.75rem;
     color: var(--text-muted, #616161);
-  }
-  .slot-arrow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted, #616161);
-    font-size: 1.125rem;
-    line-height: 1;
-  }
-  /* Single-slot templates fall back to a sensible single column. */
-  .slot-grid:has(> :nth-child(1):last-child) {
-    grid-template-columns: 1fr;
   }
 </style>

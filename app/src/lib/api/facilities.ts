@@ -90,6 +90,13 @@ export interface NodeLogicPlacement {
 export interface FacilitiesListing {
   facilities: Facility[];
   logicPlacement: NodeLogicPlacement[];
+  panelMigration?: PanelMigration | null;
+}
+
+export interface PanelMigration {
+  indicators: number;
+  panels: number;
+  warnings: string[];
 }
 
 /// Derived status of a facility (never persisted on the entity).

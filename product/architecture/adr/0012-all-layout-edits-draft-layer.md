@@ -515,3 +515,22 @@ generic teardown and leaves board rows configured); a dialog text derived on the
 frontend beside the backend reset set (the two can name different rows, e.g. a
 claimed row with Lamp Selection 0); running `overlay_releases` a second time in
 the panel module (a second definition of "free").
+
+## 2026-11-26 extension: legacy indicator persistence lifecycle (Spec 021 S5)
+
+`facilitiesStore` owns the per-open migration marker. The converted document is
+the baseline, not a collection of compiler/configuration drafts. Its marker
+adds one facility edit to the existing `effectiveNodeStore` dirty aggregate:
+Save controls and the close prompt do not introduce another dirty owner.
+
+Failed Save retains the marker; `saveLayoutOrchestrated` acknowledges it after
+successful persistence. Discard acknowledges conversion while preserving panels.
+An equivalent listing cannot re-dirty an acknowledged open session.
+`offlineLayoutOrchestrator` starts a fresh marker lifecycle only after a successful
+actual open. Closing/resetting clears all migration state. No configuration
+drafts, Pending Changes or bus writes are introduced by conversion.
+
+Block Indicator composition/teardown, its IPC/API and slot pickers are retired.
+Panel/ABS staging and removal retain the shared transaction; hardware-channel
+cascade detaches membership only and never deletes old bowtie names or resets
+their event connections. Manual bowtie editing is unchanged.

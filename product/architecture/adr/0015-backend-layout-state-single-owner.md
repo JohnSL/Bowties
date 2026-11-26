@@ -524,3 +524,30 @@ tracked in `specs/backlog.md`.
 - The pending-change IPCs require only an open layout (no offline-mode gate): every Save records rows.
 - "Still waiting" is one predicate, `PendingChangeStatus::is_waiting` (not applied, already applied or clean), mirrored in TypeScript.
 - Which nodes had their configuration read from the bus during the current connection is held by `ConnectionSession` (dies with the connection; cleared on layout open and close).
+
+## 2026-11-26 extension: one canonical converted aggregate (Spec 021 S5)
+
+Core `layout::read_capture` normalizes facility-channel references, then invokes
+pure/idempotent `layout::panel_migration::migrate` over facilities, channels,
+bowtie metadata and saved node identity. Open seeds `LayoutState` with this
+converted aggregate and the optional `PanelMigration` summary.
+
+`list_facilities` and `list_channels` read that saved aggregate, not independent
+raw files and not frontend draft overlays. Listing thus preserves the converted
+panel baseline and former facility lamp names. Save persists the same converted
+documents through the existing journal and clears the backend conversion summary
+only after success.
+
+Migration retains channel IDs, bindings, node configuration/events and bowtie
+names/tags. It clears only retired Block Indicator backlinks, groups by canonical
+lamp-board key in source order, keeps lamp-less blocks and drops block-less or
+malformed records with explicit warnings. Same-panel duplicate blocks/lamps keep
+the first accepted entry; cross-panel shared blocks remain valid. Surviving
+facility IDs cannot collide. The retired occupied→lit / clear→unlit mapping
+becomes the Panel Occupied default without recompilation.
+
+The migration owner also decodes legacy wire records individually: an
+identifiable malformed Block Indicator record is reported and dropped without
+rejecting valid neighbors. Malformed supported/unknown records and malformed
+YAML documents still fail explicitly; conversion must not silently discard
+current facility intent. Typed and rejected-wire records share backlink cleanup.

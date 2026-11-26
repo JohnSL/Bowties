@@ -106,13 +106,8 @@
   import RailroadPanel from '$lib/components/Railroad/RailroadPanel.svelte';
   import { startEventStateListening, resolveChannelEventIds } from '$lib/orchestration/eventStateOrchestrator';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
-  import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
-  import SelectChannelPicker from '$lib/components/Facilities/SelectChannelPicker.svelte';
-  import AddChannelPicker from '$lib/components/Facilities/AddChannelPicker.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
-  import type { ChannelRole, InformationChannel } from '$lib/api/channels';
-  import { deriveChannelState, type ChannelState } from '$lib/utils/channelState';
 
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
@@ -242,17 +237,7 @@
     }
   });
 
-  // Spec 015 + Spec 018 / S1: Hydrate channel and facility inventories when
-  // a layout becomes active, then sweep for facility slot bindings pointing
-  // at channels absent from the inventory and stage
-  // `detachChannelFromSlot` drafts.
-  //
-  // 2026-07-03 load-time repair: the pre-018 `list_facilities` IPC does
-  // not normalise on read, so orphan bindings from earlier bugs would
-  // otherwise count against the slot cap and keep the facility "Wired"
-  // against a phantom consumer with no way for the user to save the
-  // cleanup. See
-  // `facilityCascadeOrchestrator.reconcileDanglingChannelRefsOnLoad`.
+  // Both inventories come from the canonical backend aggregate.
   $effect(() => {
     if (!layoutStore.activeContext) return;
     void (async () => {
@@ -262,6 +247,22 @@
       ]);
       facilityCascadeOrchestrator.reconcileDanglingChannelRefsOnLoad();
     })();
+  });
+
+  $effect(() => {
+    const migration = facilitiesStore.migrationNotice;
+    if (!migration) return;
+    const indicators = migration.indicators === 1 ? 'Block Indicator' : 'Block Indicators';
+    const panels = migration.panels === 1 ? 'Panel' : 'Panels';
+    toast.push(`${migration.indicators} ${indicators} became ${migration.panels} ${panels}. Save to keep the converted layout.`, {
+      theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
+    });
+    for (const warning of migration.warnings) {
+      toast.push(warning, {
+        theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
+      });
+    }
+    facilitiesStore.acknowledgeMigrationNotice();
   });
 
   // Spec 018 / S6 (D3): mount the hardware-channel cascade orchestrator once
@@ -1474,132 +1475,10 @@
     && !layoutStore.activeContext
   );
 
-  // ── Spec 018 / S4: Slot Binding workflow — Select-channel picker ───────
-  // Route owns the picker open/close state. Component-layer slot
-  // intent bubbles up via `<RailroadPanel>` → `<FacilitiesSection>` →
-  // `<FacilityCard>` → `<FacilitySlot>` callbacks; this route resolves
-  // candidates from `effectiveLayoutStore.unboundChannelsForRole` and
-  // dispatches confirmations through `facilityOrchestrator`. Rebind
-  // was retired in S6 D4 — changing a slot's channel is now a
-  // two-step Remove-from-slot + Select/Add flow.
-  type SlotPickerState = {
-    facilityId: string;
-    slotLabel: string;
-    requiredRole: string;
-  };
-  let slotPicker = $state<SlotPickerState | null>(null);
-
   function slotChannelUsedBy(channelId: string): ReadonlyArray<{ facilityName: string; slotLabel: string }> {
     return effectiveLayoutStore.channelUsedBy(channelId);
   }
 
-  function pickerSlotRequiredRole(facilityId: string, slotLabel: string): string | undefined {
-    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-    if (!facility) return undefined;
-    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
-    return template?.slots.find((s) => s.label === slotLabel)?.requiredRole;
-  }
-
-  function handleSelectChannelIntent(facilityId: string, slotLabel: string) {
-    const requiredRole = pickerSlotRequiredRole(facilityId, slotLabel);
-    if (!requiredRole) return;
-    slotPicker = { facilityId, slotLabel, requiredRole };
-  }
-  function handleRemoveFromSlot(facilityId: string, slotLabel: string, currentChannelId: string) {
-    facilityOrchestrator
-      .removeFromSlot({ facilityId, slotLabel, channelId: currentChannelId })
-      .catch((err) => {
-        // Spec 018 / S6 bugfix — see handlePickerConfirm.
-        console.error('[facility] removeFromSlot failed', err);
-        toast.push(`Could not remove channel: ${err instanceof Error ? err.message : String(err)}`, {
-          theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
-        });
-      });
-  }
-  function closeSlotPicker() {
-    slotPicker = null;
-  }
-  function handlePickerConfirm(channelId: string) {
-    const picker = slotPicker;
-    if (!picker) return;
-    closeSlotPicker();
-    facilityOrchestrator
-      .selectChannelForSlot({
-        facilityId: picker.facilityId,
-        slotLabel: picker.slotLabel,
-        channelId,
-      })
-      .catch((err) => {
-        // Spec 018 / S6 bugfix — surface orchestrator failures (e.g.
-        // a compose IPC error against stale draft state) instead of
-        // silently dropping them via an unhandled promise rejection.
-        console.error('[facility] selectChannelForSlot failed', err);
-        toast.push(`Could not bind channel: ${err instanceof Error ? err.message : String(err)}`, {
-          theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
-        });
-      });
-  }
-
-  let pickerCandidates = $derived.by(() => {
-    if (!slotPicker) return [] as InformationChannel[];
-    return effectiveLayoutStore.unboundChannelsForRole(
-      slotPicker.requiredRole as ChannelRole,
-    );
-  });
-
-  function pickerChannelState(channelId: string): ChannelState {
-    const ids = resolvedEventIds.get(channelId);
-    // The Select-channel picker is invoked only for block-occupancy slots
-    // today (S4 producer half). The Add-channel picker (S5) doesn't show
-    // existing channels — it lists eligible lamp rows — so a single role
-    // discriminator suffices here.
-    return deriveChannelState(
-      eventStateStore.events,
-      ids?.['occupied'],
-      ids?.['clear'],
-      'block-occupancy',
-    );
-  }
-
-  // ── Spec 018 / S5 — Add-channel picker state ────────────────────────────
-  type AddChannelPickerState = {
-    facilityId: string;
-    slotLabel: string;
-  };
-  let addChannelPicker = $state<AddChannelPickerState | null>(null);
-
-  let addChannelCandidates = $derived.by(() => {
-    if (!addChannelPicker) return [];
-    return effectiveLayoutStore.eligibleLampRowsForStyle('single-led-direct-lamp');
-  });
-
-  function handleAddChannelIntent(facilityId: string, slotLabel: string) {
-    addChannelPicker = { facilityId, slotLabel };
-  }
-
-  function closeAddChannelPicker() {
-    addChannelPicker = null;
-  }
-
-  function handleAddChannelConfirm(lampRowNodeKey: string, rowOrdinal: number) {
-    const picker = addChannelPicker;
-    if (!picker) return;
-    closeAddChannelPicker();
-    facilityOrchestrator
-      .addChannelForSlot({
-        facilityId: picker.facilityId,
-        slotLabel: picker.slotLabel,
-        lampRowNodeKey,
-        rowOrdinal,
-      })
-      .catch((err) => {
-        // Spec 018 / S6 bugfix — see handlePickerConfirm.
-        console.error('[facility] addChannelForSlot failed', err);
-        toast.push(`Could not add channel: ${err instanceof Error ? err.message : String(err)}`, {
-          theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
-        });
-      });
-  }
 </script>
 
 
@@ -1758,9 +1637,6 @@
           nodeParts={resolveNodeParts}
           {resolvedEventIds}
           usedBy={slotChannelUsedBy}
-          onSelectChannel={handleSelectChannelIntent}
-          onAddChannel={handleAddChannelIntent}
-          onRemoveFromSlot={handleRemoveFromSlot}
           nodeTree={(key) => nodeTreeStore.getTree(key)}
         />
       </div>
@@ -1913,30 +1789,6 @@
       unsavedDialog = null;
       proceed?.();
     }}
-  />
-{/if}
-
-<!-- Spec 018 / S4: Slot Binding picker (Select channel). -->
-{#if slotPicker}
-  <SelectChannelPicker
-    slotLabel={slotPicker.slotLabel}
-    requiredRole={slotPicker.requiredRole}
-    candidateChannels={pickerCandidates}
-    channelState={pickerChannelState}
-    onConfirm={handlePickerConfirm}
-    onCancel={closeSlotPicker}
-  />
-{/if}
-
-<!-- Spec 018 / S5: Add channel picker (consumer-side, lamp-indicator slots). -->
-{#if addChannelPicker}
-  <AddChannelPicker
-    slotLabel={addChannelPicker.slotLabel}
-    requiredRole="lamp-indicator"
-    requiredStyle="single-led-direct-lamp"
-    candidateGroups={addChannelCandidates}
-    onConfirm={handleAddChannelConfirm}
-    onCancel={closeAddChannelPicker}
   />
 {/if}
 
@@ -2436,4 +2288,3 @@
     color: #94a3b8;
   }
 </style>
-

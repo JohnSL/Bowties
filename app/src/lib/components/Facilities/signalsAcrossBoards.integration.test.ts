@@ -17,7 +17,6 @@ const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async
 vi.mock('$lib/api/behaviorTemplates', () => ({ listBehaviorTemplates: listBehaviorTemplatesMock }));
 vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] as Facility[], composeFacilityRemoval: vi.fn() }));
 vi.mock('$lib/api/channels', () => ({ listChannels: async () => [] }));
-vi.mock('$lib/api/facilityBowties', () => ({ composeFacilityBowties: vi.fn(async () => []) }));
 vi.mock('$lib/api/layout', () => ({
   syncLayoutDrafts: vi.fn(async () => undefined),
   clearLayoutDrafts: vi.fn(async () => undefined),

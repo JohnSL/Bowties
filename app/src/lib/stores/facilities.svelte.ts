@@ -4,6 +4,7 @@ import {
   type Facility,
   type NodeLogicPlacement,
   type PanelRecord,
+  type PanelMigration,
   type PlacedLogicGroup,
   type SlotBinding,
 } from '$lib/api/facilities';
@@ -66,6 +67,31 @@ class FacilitiesStore {
    * placement, net of deleted facilities, are kept (ADR-0012 no-op suppression).
    */
   private _pendingPlacement = $state<Map<string, PlacedLogicGroup[]>>(new Map());
+  private _migrationNeedsSave = $state(false);
+  private _migrationObserved = false;
+  private _migration = $state<PanelMigration | null>(null);
+  private _migrationNoticeShown = $state(false);
+
+  get migrationNotice(): PanelMigration | null {
+    return this._migrationNoticeShown ? null : this._migration;
+  }
+
+  acknowledgeMigrationNotice(): void {
+    this._migrationNoticeShown = true;
+  }
+
+  acknowledgeMigration(): void {
+    this._migrationNeedsSave = false;
+  }
+
+  beginOpen(migration: PanelMigration | null = null): void {
+    this.resetForNewLayout();
+    if (migration) {
+      this._migration = migration;
+      this._migrationObserved = true;
+      this._migrationNeedsSave = true;
+    }
+  }
 
   /** Effective view: baseline (minus deletions) + pending creations, with pending renames + slot edits applied. */
   get facilities(): Facility[] {
@@ -110,6 +136,7 @@ class FacilitiesStore {
       || this._pendingBlockSignals.size > 0
       || this._pendingPanels.size > 0
       || this._pendingPlacement.size > 0
+      || this._migrationNeedsSave
     );
   }
 
@@ -126,7 +153,7 @@ class FacilitiesStore {
     );
     // Placement follows the facility edit that planned it, so it is not a
     // second edit; a placement change alone still counts.
-    return facilityEdits > 0 ? facilityEdits : this._pendingPlacement.size;
+    return (facilityEdits > 0 ? facilityEdits : this._pendingPlacement.size) + (this._migrationNeedsSave ? 1 : 0);
   }
 
   /** Effective Logic placement per board: saved placement net of deleted facilities, with staged boards applied. */
@@ -168,6 +195,11 @@ class FacilitiesStore {
 
   /** Revert all pending edits. */
   discard(): void {
+    this.acknowledgeMigration();
+    this._clearDrafts();
+  }
+
+  private _clearDrafts(): void {
     this._pendingCreations = [];
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
@@ -179,15 +211,10 @@ class FacilitiesStore {
 
   /** Replace the baseline (facilities and Logic placement) after a successful save; clear all drafts. */
   hydrateBaseline(facilities: Facility[], logicPlacement: NodeLogicPlacement[] = []): void {
+    this.acknowledgeMigration();
     this._baseline = facilities;
     this._baselinePlacement = logicPlacement;
-    this._pendingCreations = [];
-    this._pendingRenames = new Map();
-    this._pendingDeletions = new Set();
-    this._pendingSlotBindings = new Map();
-    this._pendingBlockSignals = new Map();
-    this._pendingPanels = new Map();
-    this._pendingPlacement = new Map();
+    this._clearDrafts();
   }
 
   /** Collect deltas for the save orchestrator. */
@@ -254,15 +281,16 @@ class FacilitiesStore {
   /** Load facilities from the backend baseline. */
   async loadFacilities(): Promise<void> {
     const result = await listFacilities();
+    if (result?.panelMigration && !this._migrationObserved) {
+      this._migrationNeedsSave = true;
+      this._migrationObserved = true;
+      this._migration = result.panelMigration;
+    } else if (!result?.panelMigration) {
+      this.acknowledgeMigration();
+    }
     this._baseline = Array.isArray(result?.facilities) ? result.facilities : [];
     this._baselinePlacement = Array.isArray(result?.logicPlacement) ? result.logicPlacement : [];
-    this._pendingPlacement = new Map();
-    this._pendingCreations = [];
-    this._pendingRenames = new Map();
-    this._pendingDeletions = new Set();
-    this._pendingSlotBindings = new Map();
-    this._pendingBlockSignals = new Map();
-    this._pendingPanels = new Map();
+    this._clearDrafts();
   }
 
   /**
@@ -542,15 +570,13 @@ class FacilitiesStore {
 
   /** Clear all facility state. Called on layout close. */
   reset(): void {
+    this._migrationNeedsSave = false;
+    this._migrationObserved = false;
+    this._migration = null;
+    this._migrationNoticeShown = false;
     this._baseline = [];
     this._baselinePlacement = [];
-    this._pendingPlacement = new Map();
-    this._pendingCreations = [];
-    this._pendingRenames = new Map();
-    this._pendingDeletions = new Set();
-    this._pendingSlotBindings = new Map();
-    this._pendingBlockSignals = new Map();
-    this._pendingPanels = new Map();
+    this._clearDrafts();
   }
 
   resetForNewLayout(): void {

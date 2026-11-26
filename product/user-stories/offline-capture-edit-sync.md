@@ -57,6 +57,29 @@ A user opens a saved layout without connecting to a live bus and continues to br
 
 ## Current User Story 3: Make And Save Offline Changes
 
+### Automatic legacy indicator conversion
+
+Opening a layout with Block Indicators converts them to Panels before publishing
+the canonical backend layout. Panels group by lamp board in source order;
+lamp-less blocks go into **Indicators without a lamp**. Missing blocks,
+malformed records and same-panel block/lamp collisions are dropped with explicit
+diagnostics (first accepted entry wins). Channel identities, bindings, node
+configuration/events and old bowtie names survive; only retired facility
+backlinks are cleared. Cross-panel block sharing remains valid.
+
+The facilities store owns a per-open persistence marker, counted through
+`effectiveNodeStore.dirtyBreakdown.facilities`. Save and close expose it as
+unsaved layout work, not configuration or Sync work. Failed Save retains it;
+successful Save clears it. Discard clears the marker without undoing conversion;
+equivalent inventory reloads stay acknowledged, while an actual reopen of legacy
+disk data marks conversion unsaved again. No legacy indicators means no marker
+and no conversion notice.
+
+Regression surfaces: `bowties-core/tests/panel_migration_load.rs`,
+`RailroadPanel.migration.integration.test.ts`, and
+`app/src/routes/page.migration.integration.test.ts` (notice, cards, Save/close
+consumers and preserved names). Visual and bench acceptance remain separate.
+
 A user edits supported configuration and bowtie-related state while offline and saves those changes into the layout.
 
 ### Current Behavior

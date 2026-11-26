@@ -21,7 +21,6 @@ vi.mock('$lib/api/behaviorTemplates', () => ({
 }));
 vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] }));
 vi.mock('$lib/api/channels', () => ({ listChannels: async () => [] }));
-vi.mock('$lib/api/facilityBowties', () => ({ composeFacilityBowties: vi.fn() }));
 vi.mock('$lib/api/layout', () => ({
   syncLayoutDrafts: vi.fn(async () => undefined),
   clearLayoutDrafts: vi.fn(async () => undefined),

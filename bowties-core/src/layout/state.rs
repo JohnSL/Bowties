@@ -104,6 +104,7 @@ pub struct LayoutState {
     channels: ChannelsDocument,
     facilities: FacilitiesDocument,
     pending_changes: Vec<PendingChange>,
+    panel_migration: Option<super::panel_migration::PanelMigration>,
     captured: HashMap<NodeKey, CapturedNode>,
     drafts: DraftLayer,
     discovered_roles: BTreeMap<String, crate::layout::types::RoleClassification>,
@@ -133,6 +134,7 @@ impl LayoutState {
             channels,
             facilities,
             load_warnings: _,
+            panel_migration,
         } = loaded;
 
         let mut saved: HashMap<NodeKey, SavedNode> = HashMap::with_capacity(node_snapshots.len());
@@ -161,6 +163,7 @@ impl LayoutState {
             channels,
             facilities,
             pending_changes,
+            panel_migration,
             captured: HashMap::new(),
             drafts: DraftLayer::default(),
             discovered_roles: BTreeMap::new(),
@@ -168,6 +171,14 @@ impl LayoutState {
     }
 
     // ── Queries (read paths) ───────────────────────────────────────────────
+
+    pub fn panel_migration(&self) -> Option<&super::panel_migration::PanelMigration> {
+        self.panel_migration.as_ref()
+    }
+
+    pub fn acknowledge_panel_migration(&mut self) {
+        self.panel_migration = None;
+    }
 
     /// Folder path of the open layout on disk.
     pub fn root(&self) -> &Path {
@@ -608,6 +619,7 @@ mod tests {
             channels: ChannelsDocument::default(),
             facilities: FacilitiesDocument::default(),
             load_warnings: Vec::new(),
+            panel_migration: None,
         }
     }
 
@@ -850,11 +862,10 @@ mod tests {
         crate::layout::types::LayoutEditDelta::AddFacility {
             facility: crate::layout::facilities::Facility {
                 facility_id: facility_id.to_string(),
-                template_id: "block-indicator".to_string(),
+                template_id: "panel".to_string(),
                 name: name.to_string(),
                 slot_bindings: BTreeMap::from([
-                    ("input".to_string(), Vec::new()),
-                    ("output".to_string(), Vec::new()),
+                    ("lamps".to_string(), Vec::new()),
                 ]),
                 block_signals: None,
                 panel: None,

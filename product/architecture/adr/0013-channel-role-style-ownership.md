@@ -174,3 +174,19 @@ a row the layout does not hold, including the old board's row number after
 a cross-board move); diffing saved and requested rows in the backend command
 or the orchestrator (a second copy of the keep rule beside the compiler that
 applies it).
+
+## 2026-11-26 extension: legacy indicator fidelity (Spec 021 S5)
+
+Load conversion retains each channel's ID, ownership, style and hardware binding.
+The former Block Indicator facility name becomes its accepted lamp channel's
+name. Panel `litWhen: occupied` preserves the retired occupied→lit and
+clear→unlit mapping without changing Lamp On/Off events, row allocation or
+hand-set Lamp Selection.
+
+Core groups by canonical lamp-board key in source order. A block without a lamp
+belongs to **Indicators without a lamp**; no-block and malformed records are
+reported/dropped. Same-panel duplicate block or lamp keeps the first accepted
+entry and warns; sharing a block across different panels remains valid.
+Existing bowtie names/tags survive independently of the retired facility
+backlink. No profile-driven manual Lamp Selection prerequisite is needed for
+the retired Add-channel picker: the Panel editor already owns pin selection.

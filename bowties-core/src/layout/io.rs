@@ -170,6 +170,7 @@ pub struct LayoutDirectoryReadData {
     /// Consumers surface these to the user; the cleaned documents
     /// are written back on the next save.
     pub load_warnings: Vec<String>,
+    pub panel_migration: Option<super::panel_migration::PanelMigration>,
 }
 
 pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
@@ -298,11 +299,11 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
     let manifest: LayoutManifest = read_yaml_file(&manifest_path)?;
     manifest.validate()?;
 
-    let (bowties, node_snapshots, pending_changes) = read_companion_contents(layout_dir, &manifest)?;
+    let (mut bowties, node_snapshots, pending_changes) = read_companion_contents(layout_dir, &manifest)?;
 
     // channels.yaml is optional — pre-015 layouts won't have it.
     let channels_path = layout_dir.join(CHANNELS_FILE);
-    let channels: ChannelsDocument = if channels_path.exists() {
+    let mut channels: ChannelsDocument = if channels_path.exists() {
         read_yaml_file(&channels_path)?
     } else {
         ChannelsDocument::default()
@@ -310,10 +311,11 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
 
     // facilities.yaml is optional — pre-018 layouts won't have it.
     let facilities_path = layout_dir.join(FACILITIES_FILE);
-    let mut facilities: FacilitiesDocument = if facilities_path.exists() {
-        read_yaml_file(&facilities_path)?
+    let (mut facilities, rejected) = if facilities_path.exists() {
+        super::panel_migration::decode_facilities(read_yaml_file(&facilities_path)?)
+            .map_err(|error| format!("Failed to parse YAML file {}: {error}", facilities_path.display()))?
     } else {
-        FacilitiesDocument::default()
+        (FacilitiesDocument::default(), Vec::new())
     };
 
     // Referential integrity between facilities.yaml and channels.yaml is
@@ -322,6 +324,9 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
     // repaired references are surfaced through `load_warnings`.
     let load_warnings =
         crate::layout::facilities::normalize_facility_channel_refs(&mut facilities, &channels);
+    let panel_migration = super::panel_migration::migrate_loaded(
+        &mut facilities, &mut channels, &mut bowties, &node_snapshots, rejected,
+    );
 
     Ok(LayoutDirectoryReadData {
         manifest,
@@ -332,6 +337,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
         channels,
         facilities,
         load_warnings,
+        panel_migration,
     })
 }
 
@@ -1181,6 +1187,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
-
-
-

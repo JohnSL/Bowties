@@ -83,7 +83,7 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
   - `configChangesStore` ([app/src/lib/stores/configChanges.svelte.ts](../app/src/lib/stores/configChanges.svelte.ts)) — `config` bucket
   - `bowtieMetadataStore` ([app/src/lib/stores/bowtieMetadata.svelte.ts](../app/src/lib/stores/bowtieMetadata.svelte.ts)) — `metadata` bucket
   - `channelsStore` ([app/src/lib/stores/channels.svelte.ts](../app/src/lib/stores/channels.svelte.ts)) — `channels` bucket
-  - `facilitiesStore` ([app/src/lib/stores/facilities.svelte.ts](../app/src/lib/stores/facilities.svelte.ts)) — `facilities` bucket
+  - `facilitiesStore` ([app/src/lib/stores/facilities.svelte.ts](../app/src/lib/stores/facilities.svelte.ts)) — `facilities` bucket, including one per-open conversion persistence marker (Spec 021 S5); never a config/Sync draft.
   - `connectorSelectionsStore` ([app/src/lib/stores/connectorSelections.svelte.ts](../app/src/lib/stores/connectorSelections.svelte.ts)) — `connectorSelections` bucket
   - `pendingChangesStore` ([app/src/lib/stores/pendingChanges.svelte.ts](../app/src/lib/stores/pendingChanges.svelte.ts)) — `pendingDrafts` + `revertedPendingChanges` buckets; `configChanges` (distinct unsaved configuration targets, the Save toolbar count) and `waitingPendingChanges` (saved rows still waiting; shown, not dirty) (Spec 020 E3b-1)
   - `layoutStore` ([app/src/lib/stores/layout.svelte.ts](../app/src/lib/stores/layout.svelte.ts)) — `layoutStruct` bucket
@@ -95,7 +95,7 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
   - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L196) — `hasInMemoryEdits` derivation
   - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L954) — window-close handler reads `isDirty` + `dirtyBreakdown`
 - **Per-slice plumbing rule**: When adding a new edit-bearing store, extend `effectiveNodeStore.dirtyBreakdown` with a new bucket AND update the `isDirty` predicate in the same slice. The store must also register a reset callback in `layoutLifecycleOrchestrator.resetForNewLayout()` (Lifecycle Reset seam). Consumers read exclusively through the `$lib/layout` facade — never re-derive from raw stores.
-- **Last-modified**: 2026-06-28
+- **Last-modified**: 2026-11-26
 - **Last-audited**: 2026-11-25
 
 ### Notes
@@ -107,6 +107,13 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
 - S1.2 fixes: `dirtyBreakdown` became a typed snapshot (adding a bucket requires explicit edits to the interface AND the getter); all Consumers route through the facade; `changeTrackerStore`, `unsavedChangesGuard`, and the enumerated-param `deriveSaveControlsViewState` were deleted.
 
 **Test coverage**: `app/src/lib/layout/dirtyAggregate.integration.test.ts` asserts each bucket independently.
+
+Spec 021 S5: `RailroadPanel.migration.integration.test.ts` and
+`page.migration.integration.test.ts` trace conversion through rendered cards,
+Save/Discard and close prompts. Failed Save retains the marker; successful Save
+and Discard acknowledge it. Equivalent reload does not re-dirty; actual reopen
+does. Discard preserves converted panels. `effectiveNodeStore` remains the sole
+aggregate dirty owner.
 
 ---
 
@@ -222,6 +229,12 @@ Replaces the Spec 015 card-grid layout (`ChannelGroup` / `ChannelCard`, retired 
 
 ## Slot Binding
 
+**Spec 021 S5:** the interactive Block Indicator slot-binding workflows below
+are retired historical context. Current Panel/ABS bindings are owned by their
+compile-and-stage transactions in `facilityOrchestrator`, with whole-record
+agreement checked by core. `FacilitySlot` and Select/Add channel pickers no
+longer exist; do not reinstate the old workflow rules.
+
 - **Governing ADR(s)**: ADR-0012 (draft layer — pending edits diffed to deltas); ADR-0013 (role-based binding); ADR-0004 (single-merge derivation owner)
 - **Owner**: `app/src/lib/orchestration/facilityOrchestrator.ts` — `selectChannelForSlot({ facilityId, slotLabel, channelId })` (attach-only post-S6) + `removeFromSlot({ facilityId, slotLabel, channelId })` + `addChannelForSlot({...})`. Validates `channel.role === slot.requiredRole` up-front and rejects attaches that would exceed `slot.maxChannels` via `SlotAtMaxError` — the cardinality guard the store's docstring always advertised but the pre-S6 code left unenforced. Rebind was retired in S6 (2026-07-01) per D4: changing a slot's channel is now a two-step Remove-from-slot + Select/Add sequence, and there is no rebind-specific delta or mode flag anywhere in the seam.
 - **Contributors** (sources of the binding state):
@@ -238,7 +251,7 @@ Replaces the Spec 015 card-grid layout (`ChannelGroup` / `ChannelCard`, retired 
 - **Per-slice plumbing rule**: All slot-binding mutations MUST go through `facilityOrchestrator.{selectChannelForSlot, removeFromSlot, addChannelForSlot}`; component layers do not call `facilitiesStore.{attachChannel, detachChannel}` or `channelsStore.{createUserOwnedChannel, removeUserOwnedChannel}` directly. The wire form is always `Vec<String>` bounded by template `max_channels` — never reintroduce `Option<String>` even if a slot is documented as max-1. New facility behaviors that need multi-channel bindings (ABS aspect-slot repeaters) MUST raise their slot's `max_channels` and update the picker filter. No Rename / re-label affordance ever lives on the slot (channel rename is a Channels-panel-only operation); no atomic "rebind" action lives on the slot either (swap = Remove + Select/Add — S6 D4). Every attach path now hooks the Facility Bowtie Lifecycle seam via `composeBowtiesIfWired`; every detach path fires `tearDownFacilityBowties` **before** the detach mutation so teardown sees the still-Wired shape.
 - **Spec 020 additions (2026-11-22)**: the `automatic-block-signals` template declares one `signals` slot (role signal-indication, unbounded). Its bindings mirror the channel IDs in the facility's `blockSignals` record; core `check_block_signals_agreement` rejects a mismatch at the end of each delta-apply batch, so AddFacility and its attaches travel in one batch (`facilitiesStore` folds attaches on a pending creation into the AddFacility delta). The ABS `FacilityCard` renders the slot read-only (no Add channel).
 - **Spec 021 additions (2026-11-25)**: the `panel` template declares one `lamps` slot (role lamp-indicator, unbounded). Its bindings mirror the entry `lampChannelId`s in the facility's `panel` record; core `check_panel_agreement` rejects a mismatch, a channel on two entries or a duplicate block at the end of each delta-apply batch (attaches on a pending creation fold into AddFacility, as for ABS). Panel lamp channels are created and attached only by `facilityOrchestrator.createPanelFacility`, not by the slot pickers. Blocks are referenced from the record, not bound to a slot.
-- **Last-modified**: 2026-11-25 (Spec 021 S1 additions); 2026-11-22 (Spec 020 E1a additions)
+- **Last-modified**: 2026-11-26 (Spec 021 S5 retirement)
 - **Last-audited**: 2026-11-25
 
 ### Notes
@@ -364,7 +377,23 @@ S5 generalised what S2 had inlined for the connector-input + producer case. The 
 Before this seam existed the wrapper invariant was rediscovered (and partially encoded) in three independent places — `groupReplicatedChildren`, `resolvePillSelectionsForPath`, and the Spec 018 / S5 lamp-row enumeration. The latter two synced-up over time, but the S5 derivation and `resolve_lamp_row_path_prefix` both inspected only segment-level siblings; against the real `build_children` output that meant they each returned exactly one ordinal-1 hit (the wrapper itself). The shared helper makes the wrapper invariant a named, tested rule that future shapes inherit for free.
 
 
-## Facility Bowtie Lifecycle
+## Canonical Panel Migration (Spec 021 S5)
+
+- **Governing ADRs**: ADR-0012 and ADR-0015, 2026-11-26 extensions.
+- **Owner**: core `layout/panel_migration.rs::migrate` for pure conversion; `facilitiesStore` for the per-open persistence marker.
+- **Contributors**: normalized facilities/channels, saved board names and bowtie metadata from `read_capture`; `LayoutState::from_loaded`; canonical saved Tauri facilities/channels listings; `offlineLayoutOrchestrator` begin-open and `saveLayoutOrchestrated` acknowledgement.
+- **Consumers**: existing route toasts, Panel cards, aggregate Save/close presentation, and preserved Bowties names.
+- **Rule**: no compile, event allocation, configuration draft or Sync work during conversion. First accepted same-panel block/lamp wins with explicit warning; malformed/block-less records are reported/dropped; shared blocks across panels are valid. Failed Save retains the marker; Discard keeps panels; equivalent reload stays acknowledged, actual legacy reopen re-dirties.
+- **Tests**: `panel_migration_load.rs`, `commands::facilities::tests`, `RailroadPanel.migration.integration.test.ts`, `page.migration.integration.test.ts`.
+- **Last-modified**: 2026-11-26
+- **Last-audited**: not fully audited (bounded S5 wiring trace only)
+
+## Facility Bowtie Lifecycle (retired 2026-11-26)
+
+The following is historical context, not an active plumbing requirement.
+Spec 021 S5 removed both composers, their API/IPC and all slot-picker callers.
+Migration preserves names/events and clears only retired backlinks. Panel/ABS
+use the existing compile-and-stage/removal transactions; manual bowties remain.
 
 - **Governing ADR(s)**: ADR-0004 (ffectiveLayoutStore single-merge derivation owner); ADR-0011 (aggregate dirty signal); ADR-0012 (draft layer); ADR-0013 (channel role / style / binding); Spec 018 / S6 D1, D2, D5, D6
 - **Owner**: [app/src/lib/orchestration/facilityOrchestrator.ts](../app/src/lib/orchestration/facilityOrchestrator.ts) `composeBowtiesIfWired(facilityId)` + `tearDownFacilityBowties(facilityId)` + `removeFacility({facilityId})` (Spec 021 S4 rename of the `deleteFacility` wrapper; facilities with no `panel`/`blockSignals` record take this generic teardown path). Compose is guarded by `effectiveLayoutStore.facilityStatus(facilityId) === 'Wired'`; teardown is guarded by `bowtieMetadataStore.bowtiesForFacility(facilityId)` (empty ⇒ no-op).
@@ -384,7 +413,7 @@ Before this seam existed the wrapper invariant was rediscovered (and partially e
   - The producer's occupancy events now drive the consumer's Lamp On / Lamp Off leaves through the bus without any Bowties-side mediation, once the composed edits reach the Signal-LCC node.
 - **Per-slice plumbing rule**: Composition MUST NOT introduce any new save-flow ordering — every leaf write flows through `configEditor.applyEdit` (which the config-edit save path already picks up) and every bowtie registration flows through `bowtieMetadataStore.createBowtie` (whose `collectDeltas` already threads through the delta save path). Teardown reversal MUST go through the shared `resetComposedLeavesForFacility(facilityId)` primitive rather than open-coding leaf resets — that primitive owns the two-strategy lookup: composer-forward when the facility is still Wired (fast + precise, requires intact structure) and a metadata-driven `bowtieMetadataStore.bowtiesForFacility(facilityId)` + `nodeTreeStore.trees` scan when the facility is Incomplete at teardown time (works after ghost-binding repair or when a cascade detached first). New callers that un-Wire a facility (spec 019+ cascade sources, new lifecycle transitions) MUST invoke `tearDownFacilityBowties` and MUST NOT skip it to "avoid the search" — the search is the invariant that keeps composition side effects reversible from every state. New behavior templates that need composition MUST return their state-mapping through `BehaviorTemplate.mapping` so the same composer covers them (no per-template composition modules). **2026-07-03 addition:** every path that will call `composeFacilityBowties` MUST first call `syncLayoutDrafts(collectDeltas)` (via the orchestrator's `syncDraftsForComposition` helper) so the backend's effective view reflects frontend drafts. The Wired-guard cheaply skips both calls when the facility isn't Wired.
 - **Spec 020 additions (2026-11-22)**: `BehaviorTemplate::composes_bowties()` (mapping non-empty) gates composition; `compose_bowtie_ops` and the `compose_facility_bowties` command return no ops for templates without a mapping (Automatic Block Signals). The mapping rule above applies to bowtie-composing templates only (ADR-0012 2026-11-22 extension). `applyConfigEdits` in `facilityOrchestrator.ts` is the shared applier used by `applyCompositionOps` and `createBlockSignalsFacility`.
-- **Last-modified**: 2026-11-22 (Spec 020 E1a additions)
+- **Last-modified**: 2026-11-26 (Spec 021 S5 retirement)
 - **Last-audited**: 2026-11-25
 
 ### Notes
@@ -395,20 +424,23 @@ D6 pins the write direction: the composed bowtie ADOPTS the producer channel's e
 
 ## Hardware Channel Cascade
 
+**Spec 021 S5 current rule:** `_cascadeDetach` stages membership detaches only.
+It does not consult status, compose bowties, delete metadata or reset events.
+Canonical open/list normalization means the defensive load pass normally
+finds no dangling bindings. Historical teardown/repair explanations below
+describe the retired Block Indicator flow, not current plumbing requirements.
+
 - **Governing ADR(s)**: ADR-0011 (aggregate dirty signal — no new bucket needed); ADR-0012 (draft layer — cascade side effects appear next to their trigger, atomic on Save, revertable on Discard); Spec 018 / S6 D3
 - **Owner**: [app/src/lib/orchestration/facilityCascadeOrchestrator.svelte.ts](../app/src/lib/orchestration/facilityCascadeOrchestrator.svelte.ts) `startCascade()` / `stopCascade()` + `reconcileDanglingChannelRefsOnLoad()`. Owns a private last-seen channel-id `Set<string>` and an `\.root` subscription to `channelsStore.channels`; on every transition it diffs the id set and drives the cascade for disappearing ids. Shares its detach + teardown side-effect logic through the private `_cascadeDetach(lostIds)` helper so the load-time repair path reuses the same seam.
 - **Contributors** (sources of the cascade trigger + effects):
   - [app/src/lib/stores/channels.svelte.ts](../app/src/lib/stores/channels.svelte.ts) — the `channels` list transition is the trigger. Both the S2 legacy `deleteChannels` path (BOD daughter-board clear) and the S5 `removeUserOwnedChannel` path emit id-set changes the cascade observes.
   - [app/src/lib/stores/facilities.svelte.ts](../app/src/lib/stores/facilities.svelte.ts) `detachChannel(facilityId, slotLabel, lostChannelId)` — staged for every slot binding that referenced a disappearing channel.
-  - [app/src/lib/orchestration/facilityOrchestrator.ts](../app/src/lib/orchestration/facilityOrchestrator.ts) `tearDownFacilityBowties(facilityId)` — called for each facility whose `facilityStatus` transitions Wired → Incomplete as a result of the detach round.
-  - [app/src/lib/layout/effectiveLayoutStore.svelte.ts](../app/src/lib/layout/effectiveLayoutStore.svelte.ts) `facilityStatus(facilityId)` — the derivation the cascade consults to decide whether teardown is needed.
   - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte) — sequences `channelsStore.loadChannels()` + `facilitiesStore.loadFacilities()` with `Promise.all` on layout open, then invokes `reconcileDanglingChannelRefsOnLoad()` before `startCascade()`. This is the load-time entry point.
 - **Consumers** (user-visible surfaces driven by the cascade):
   - [app/src/lib/components/Facilities/FacilityCard.svelte](../app/src/lib/components/Facilities/FacilityCard.svelte) — status pill flips Wired → Incomplete the moment the cascade lands.
-  - Bowties catalog cards created by `composeBowtiesIfWired` disappear from the panel as `tearDownFacilityBowties` drops them.
   - The toolbar's Save / Discard controls surface the cascaded edits via `effectiveNodeStore.dirtyBreakdown` — the user sees "N facility edits, M bowtie edits, K config edits" appear together and can revert everything with a single Discard.
 - **Per-slice plumbing rule**: Cascade side effects MUST be staged in the appropriate draft stores (`facilitiesStore`, `bowtieMetadataStore`, `configChangesStore`) so they are visible immediately, atomic on Save, and revertable on Discard. On-save "fixup" cascades that only appear at commit time are explicitly ruled out (ADR-0012 extension 2026-07-01). New cascade sources (future spec 019+ hardware seams) MUST plug into `facilityCascadeOrchestrator` via the same diff-based subscription pattern; do not create parallel Svelte effects that mutate the same draft stores. Load-time repairs of orphan slot bindings MUST also flow through the cascade orchestrator via `reconcileDanglingChannelRefsOnLoad()` so a dangling reference cleaned up on open ships as a normal `detachChannelFromSlot` draft — never a silent in-memory-only mutation. The cascade is mounted alongside `loadFacilities()` / `loadChannels()` in the layout-open lifecycle and torn down by `layoutLifecycleOrchestrator.resetForNewLayout()` — new lifecycle transitions MUST preserve both hooks.
-- **Last-modified**: 2026-07-03 (extension — `reconcileDanglingChannelRefsOnLoad` shares `_cascadeDetach` with runtime `_reconcile`; layout open sequences `loadChannels` + `loadFacilities` with `Promise.all` then calls the load-time repair before `startCascade`)
+- **Last-modified**: 2026-11-26 (Spec 021 S5: membership-only cascade)
 - **Last-audited**: 2026-07-01
 
 ### Notes
