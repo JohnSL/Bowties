@@ -42,6 +42,13 @@ export interface SignalWiringChoice {
   greenOutput: number | null;
 }
 
+/** A signal in this edit that holds a pin, and the lamp it drives from it. */
+export interface PinHolder {
+  signalId: string;
+  name: string;
+  lamp: 'red' | 'green';
+}
+
 /** One thing on the Wiring page that needs the user: a missing choice or a check issue. */
 export type WiringAttentionItem =
   | { kind: 'missing'; what: 'signalLcc' | 'redPin' | 'greenPin' }
@@ -103,6 +110,8 @@ export interface BlockSignalsEditorView {
   /** The next signal after `fromSignalId`, wrapping, that needs attention. */
   nextAttentionSignalId(fromSignalId: string | null): string | null;
   wiringFor(signalId: string): SignalWiringChoice | null;
+  /** The other signal in this edit that holds a pin on a node, or null when none does. */
+  pinHolder(signalId: string, nodeKey: string, output: number): PinHolder | null;
   canMoveTurnout(turnoutId: string, delta: -1 | 1): boolean;
 }
 
@@ -299,6 +308,17 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
 
   wiringFor(signalId: string): SignalWiringChoice | null { return this._wiring[signalId] ?? null; }
 
+  pinHolder(signalId: string, nodeKey: string, output: number): PinHolder | null {
+    const node = canonicalizeNodeId(nodeKey);
+    for (const other of this._preview?.signals ?? []) {
+      const choice = this._wiring[other.signalId];
+      if (other.signalId === signalId || !choice || canonicalizeNodeId(choice.nodeKey) !== node) continue;
+      if (choice.redOutput === output) return { signalId: other.signalId, name: other.name, lamp: 'red' };
+      if (choice.greenOutput === output) return { signalId: other.signalId, name: other.name, lamp: 'green' };
+    }
+    return null;
+  }
+
   /** Choosing a different node clears the pins chosen on the previous one. */
   chooseWiringNode(signalId: string, nodeKey: string): void {
     if (this._wiring[signalId]?.nodeKey === nodeKey) return;
@@ -308,11 +328,12 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   /**
    * Seat a lamp on a pin: a free pin places it, the lamp's own pin clears it,
    * and the other lamp's pin swaps the two (the other lamp takes this lamp's
-   * old pin, possibly none).
+   * old pin, possibly none). A pin another signal in this edit holds is
+   * refused: no stealing.
    */
   seatLamp(signalId: string, lamp: 'red' | 'green', output: number): void {
     const choice = this._wiring[signalId];
-    if (!choice) return;
+    if (!choice || this.pinHolder(signalId, choice.nodeKey, output)) return;
     const { assignments } = seatPin(
       { red: choice.redOutput, green: choice.greenOutput },
       lamp,

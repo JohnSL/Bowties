@@ -143,6 +143,14 @@ export type ProposalIssue =
   | { kind: 'duplicateSignalOutputs'; signalId: string; nodeKey: string; output: number }
   | { kind: 'signalOutputConflict'; signalId: string; nodeKey: string; output: number; owner: string }
   | {
+    kind: 'signalOutputHeldBySignal';
+    signalId: string;
+    nodeKey: string;
+    output: number;
+    holderSignalId: string;
+    holderName: string;
+  }
+  | {
     kind: 'insufficientSignalOutputCapacity';
     signalId: string;
     nodeKey: string;

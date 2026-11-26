@@ -112,6 +112,39 @@ describe('blockSignalsEditorStore seating a lamp', () => {
   });
 });
 
+describe('blockSignalsEditorStore pins held by other signals in the edit', () => {
+  const sig2 = { ...previewWith().signals[0], signalId: 'sig-2', name: 'Cedar Hill West' };
+
+  beforeEach(() => {
+    store.reset();
+    store.start('Main');
+    store.acceptPreview(previewWith([previewWith().signals[0], sig2]));
+    store.chooseWiringNode('sig-1', '020157000001');
+    store.seatLamp('sig-1', 'red', 3);
+    store.seatLamp('sig-1', 'green', 4);
+    store.chooseWiringNode('sig-2', '02.01.57.00.00.01');
+  });
+
+  it('names the other signal and lamp holding a pin, comparing nodes canonically', () => {
+    expect(store.pinHolder('sig-2', '020157000001', 3)).toEqual({ signalId: 'sig-1', name: 'Cedar Hill East', lamp: 'red' });
+    expect(store.pinHolder('sig-2', '020157000001', 4)).toEqual({ signalId: 'sig-1', name: 'Cedar Hill East', lamp: 'green' });
+  });
+
+  it('reports no holder for a free pin, its own pin, or another node', () => {
+    expect(store.pinHolder('sig-2', '020157000001', 5)).toBeNull();
+    expect(store.pinHolder('sig-1', '020157000001', 3)).toBeNull();
+    expect(store.pinHolder('sig-2', '020157000002', 3)).toBeNull();
+  });
+
+  it('refuses to seat a lamp on a pin another signal holds', () => {
+    store.seatLamp('sig-2', 'red', 3);
+    expect(store.wiringFor('sig-2')).toMatchObject({ redOutput: null, greenOutput: null });
+    expect(store.wiringFor('sig-1')).toMatchObject({ redOutput: 3, greenOutput: 4 });
+    store.seatLamp('sig-2', 'red', 5);
+    expect(store.wiringFor('sig-2')).toMatchObject({ redOutput: 5 });
+  });
+});
+
 describe('blockSignalsEditorStore released owners (E2c B1)', () => {
   beforeEach(() => store.reset());
 

@@ -86,9 +86,9 @@ describe('RailroadPanel Panel facility (Spec 021 / S1)', () => {
     await wirePanelBlocks(editor, [['Cedar Hill', PIN_9]]);
     expect(within(blocks).getByText('wired')).toBeInTheDocument();
 
-    await fireEvent.click(within(editor).getByRole('button', { name: /^#9 H3-G: this block/ }));
+    await fireEvent.click(within(editor).getByRole('button', { name: /^#9 H3-G: This block/ }));
     expect(within(blocks).getByText('needs a lamp')).toBeInTheDocument();
-    expect(within(editor).getByRole('button', { name: /^#9 H3-G: free/ })).toBeInTheDocument();
+    expect(within(editor).getByRole('button', { name: /^#9 H3-G: Free/ })).toBeInTheDocument();
 
     expect(within(editor).getByRole('button', { name: /^#14 H4-Y: Mainline Eastbound/ })).toBeDisabled();
   });

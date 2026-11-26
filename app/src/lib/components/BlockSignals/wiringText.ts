@@ -32,6 +32,10 @@ const ISSUE_TEXT: Record<Exclude<ComposeIssueCode, LogicIssueCode | DetailIssueC
 /** Which pin and owner an outputInUse issue names, as words; null when the issue does not say. */
 function outputInUseText(issue: ComposeIssue, outputs: SignalOutputHost['outputs']): string | null {
   const conflict = issue.bindingIssue;
+  if (conflict?.kind === 'signalOutputHeldBySignal') {
+    const label = outputs.find((output) => output.ordinal === conflict.output)?.label ?? `#${conflict.output}`;
+    return `${label} is already used by ${conflict.holderName}. Choose a free pin.`;
+  }
   if (conflict?.kind !== 'signalOutputConflict') return null;
   const pin = outputs.find((output) => output.ordinal === conflict.output);
   const label = pin?.label ?? `#${conflict.output}`;

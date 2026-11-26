@@ -30,6 +30,27 @@ describe('issueText outputInUse', () => {
   });
 });
 
+describe('issueText outputInUse naming another signal in the edit', () => {
+  const sibling = (output: number, holderName: string): ComposeIssue =>
+    ({
+      code: 'outputInUse', signalId: 'sig-2', nodeKey: 'N', detail: 'x',
+      bindingIssue: {
+        kind: 'signalOutputHeldBySignal', signalId: 'sig-2', nodeKey: 'N', output,
+        holderSignalId: 'sig-3', holderName,
+      },
+    }) as ComposeIssue;
+
+  it('names the pin and the other signal from the structured issue', () => {
+    expect(issueText(sibling(10, 'Signal 2'), OUTPUTS)).toBe(
+      '#10 H3-Y is already used by Signal 2. Choose a free pin.',
+    );
+  });
+
+  it('falls back to the pin number when the host does not list the pin', () => {
+    expect(issueText(sibling(12, 'Signal 2'), OUTPUTS)).toBe('#12 is already used by Signal 2. Choose a free pin.');
+  });
+});
+
 describe('issueText Logic placement issues', () => {
   const logicIssue = (code: ComposeIssue['code'], logic?: number[]): ComposeIssue => ({
     code, signalId: null, nodeKey: 'N', detail: 'backend detail', ...(logic ? { logic } : {}),

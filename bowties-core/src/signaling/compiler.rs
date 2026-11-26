@@ -356,6 +356,31 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
         });
     }
 
+    // Two signals may not drive the same output of one board.
+    for plan in &plans {
+        let outputs = [plan.wiring.green_output, plan.wiring.red_output];
+        for other in plans.iter().filter(|o| {
+            o.signal_id != plan.signal_id && same_node(&o.wiring.node_key, &plan.wiring.node_key)
+        }) {
+            let other_outputs = [other.wiring.green_output, other.wiring.red_output];
+            for output in outputs.iter().filter(|o| other_outputs.contains(o)) {
+                ctx.signal_id = Some(plan.signal_id.clone());
+                ctx.node_key = Some(plan.wiring.node_key.clone());
+                ctx.push_binding(
+                    CompileIssueCode::OutputInUse,
+                    &format!("Output {output} is already used by {}.", other.name),
+                    Some(ProposalIssue::SignalOutputHeldBySignal {
+                        signal_id: plan.signal_id.clone(),
+                        node_key: plan.wiring.node_key.clone(),
+                        output: *output,
+                        holder_signal_id: other.signal_id.clone(),
+                        holder_name: other.name.clone(),
+                    }),
+                );
+            }
+        }
+    }
+
     // Track Circuits and the next signal's Link Address, once every mast is chosen.
     // The circuit is on the signal's own board; the Link Address is read from the next signal's board.
     for i in 0..plans.len() {

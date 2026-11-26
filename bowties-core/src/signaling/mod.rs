@@ -476,6 +476,14 @@ pub enum ProposalIssue {
         output: u32,
         owner: String,
     },
+    /// Another signal in the same edit already drives this output of the board.
+    SignalOutputHeldBySignal {
+        signal_id: String,
+        node_key: String,
+        output: u32,
+        holder_signal_id: String,
+        holder_name: String,
+    },
     InsufficientSignalOutputCapacity {
         signal_id: String,
         node_key: String,

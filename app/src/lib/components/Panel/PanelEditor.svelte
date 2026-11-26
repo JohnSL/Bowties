@@ -35,27 +35,9 @@
   });
   const needLamp = $derived(typeof bar.wiring === 'object' ? bar.wiring.needLamp : 0);
 
-  const footStatus = $derived.by(() => {
-    if (view.step === 'blocks') {
-      return bar.blocksCount
-        ? `${bar.blocksCount} block${bar.blocksCount === 1 ? '' : 's'} on this panel`
-        : 'Nothing is created until Done on Wiring.';
-    }
-    if (needLamp > 0) {
-      return `${needLamp} block${needLamp === 1 ? '' : 's'} without a lamp. Done saves the panel as Incomplete.`;
-    }
-    return bar.blocksCount ? 'Every block has a lamp.' : '';
-  });
 </script>
 
 {#snippet leading()}
-  <span class="foot-status">
-    {#if view.finishError}
-      <span class="foot-error" role="alert">{view.finishError}</span>
-    {:else}
-      {footStatus}
-    {/if}
-  </span>
   <Button appearance="secondary" onclick={intents.cancel}>Cancel</Button>
 {/snippet}
 
@@ -77,6 +59,13 @@
         </button>
       </li>
     </ol>
+
+    {#if view.finishError}
+      <p class="error" role="alert">{view.finishError}</p>
+    {/if}
+    {#if view.step === 'wiring' && needLamp > 0}
+      <p class="lamp-note">{needLamp} block{needLamp === 1 ? '' : 's'} without a lamp. Done saves the panel as Incomplete.</p>
+    {/if}
 
     <div class="workspace">
       {#if view.step === 'blocks'}
@@ -127,8 +116,8 @@
   .step-state.ok { color: #166534; }
   .step-state.attn { color: #b45309; font-weight: 650; }
   .workspace { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
-  .foot-status { margin-right: auto; color: var(--pe-muted); font-size: 12px; }
-  .foot-error { color: var(--fluent-dangerBackground); }
+  .error { margin: 0 0 10px; color: var(--fluent-dangerBackground); }
+  .lamp-note { margin: 0 0 10px; color: var(--pe-muted); font-size: 12px; }
 
   .panel-editor :global(.field-label) { display: block; margin: 0 0 7px; color: var(--pe-muted); font-size: 10px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }
   .panel-editor :global(.input) { width: 100%; min-height: 30px; padding: 5px 8px; border: 1px solid var(--pe-border-strong); border-radius: 4px; background: #fff; color: var(--pe-text); font: inherit; box-sizing: border-box; }
@@ -167,17 +156,6 @@
   .panel-editor :global(.segment:last-child) { border-right: 1px solid var(--pe-border); border-radius: 0 4px 4px 0; }
   .panel-editor :global(.segment.selected) { border-color: var(--pe-brand); color: var(--pe-brand-hover); background: var(--pe-selected); font-weight: 650; }
   .panel-editor :global(.segment input) { position: absolute; opacity: 0; pointer-events: none; }
-  .panel-editor :global(.connector-label) { margin: 6px 0 4px; color: var(--pe-brand); font-size: 12px; font-weight: 700; }
-  .panel-editor :global(.pin-grid) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; font-size: 12px; }
-  .panel-editor :global(.pin) { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 4px 2px; border: 1px solid var(--pe-border); border-radius: 4px; background: #fff; color: var(--pe-text); font: inherit; font-size: 11px; line-height: 1.2; cursor: pointer; }
-  .panel-editor :global(.pin-id) { font-weight: 650; white-space: nowrap; }
-  .panel-editor :global(.pin-owner) { max-width: 100%; overflow: hidden; color: var(--pe-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-  .panel-editor :global(.pin.free:hover) { border-color: var(--pe-brand); }
-  .panel-editor :global(.pin.mine) { border-color: var(--pe-brand); background: var(--pe-selected); }
-  .panel-editor :global(.pin.panel) { background: #f3f0fa; }
-  .panel-editor :global(.pin.outside) { border-style: dashed; border-color: #b07a00; background: #fff8e6; }
-  .panel-editor :global(.pin.blocked) { background: #eef1f5; color: var(--pe-muted); cursor: not-allowed; }
-  .panel-editor :global(.legend) { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--pe-muted); }
   .panel-editor :global(.note) { padding: 8px 10px; border-left: 3px solid var(--pe-border-strong); border-radius: 3px; background: var(--pe-subtle); font-size: 12px; }
   .panel-editor :global(.note.warn) { border-left-color: #d17b0f; background: #fff7e6; }
   .panel-editor :global(.note.ok) { border-left-color: #17a65b; background: #eefaf4; }

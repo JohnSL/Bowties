@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import type { PanelWiringFacts, PinOwner } from '$lib/api/panels';
-import { BOARD_NODE, wiringFacts } from './panelEditorTestSupport';
+import { nodeInfoStore } from '$lib/stores/nodeInfo';
+import type { DiscoveredNode } from '$lib/api/tauri';
+import { BOARD_NODE, OTHER_BOARD_NODE, wiringFacts } from './panelEditorTestSupport';
 
 const panelWiringFactsMock = vi.fn<(nodeKeys?: string[]) => Promise<PanelWiringFacts>>();
 vi.mock('$lib/api/panels', () => ({ panelWiringFacts: panelWiringFactsMock }));
@@ -29,11 +31,15 @@ async function openOnWiring(owners: Record<number, PinOwner> = {}, blocks = DETE
   await waitFor(() => expect(panelEditorStore.factsLoaded).toBe(true));
 }
 
+const snipNode = (userName: string): DiscoveredNode =>
+  ({ snip_data: { user_name: userName, model: 'Signal-LCC', manufacturer: 'RR-CirKits, Inc.' } }) as unknown as DiscoveredNode;
+
 const row = (name: string) => screen.getByRole('option', { name: new RegExp(name) });
 const pin = (label: RegExp) => screen.getByRole('button', { name: label });
 
 describe('Panel editor Wiring step', () => {
   beforeEach(() => {
+    nodeInfoStore.set(new Map([[BOARD_NODE, snipNode('Eagle Creek Fascia')], [OTHER_BOARD_NODE, snipNode('West Signals')]]));
     panelEditorStore.reset();
     panelWiringFactsMock.mockReset();
     createPanelFacilityMock.mockReset();
@@ -56,12 +62,24 @@ describe('Panel editor Wiring step', () => {
 
     await fireEvent.click(row('Main 1'));
     expect(screen.getByText('Lamp for Main 1')).toBeInTheDocument();
-    expect(screen.getByLabelText('Board')).toHaveValue(BOARD_NODE);
-    for (const head of ['H1', 'H2', 'H3', 'H4']) {
-      expect(screen.getByRole('group', { name: `Head ${head}` })).toBeInTheDocument();
-    }
-    expect(pin(/^#1 H1-G: free/)).toBeInTheDocument();
-    expect(pin(/^#16 H4-L: free/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Board/ }).textContent?.replace(/\s+/g, ' ')).toContain(
+      'Eagle Creek Fascia Signal-LCC · 05.01.01.01.01.01',
+    );
+    const grid = screen.getByRole('group', { name: 'Pins on Eagle Creek Fascia' });
+    for (const head of ['H1', 'H2', 'H3', 'H4']) expect(grid).toHaveTextContent(head);
+    expect(pin(/^#1 H1-G: Free/)).toBeInTheDocument();
+    expect(pin(/^#16 H4-L: Free/)).toBeInTheDocument();
+  });
+
+  it('chooses another board through the picker dialog and shows its pins', async () => {
+    await openOnWiring();
+    await fireEvent.click(row('Main 1'));
+    await fireEvent.click(screen.getByRole('button', { name: /Board/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Choose a Signal LCC' });
+    await fireEvent.click(within(dialog).getByRole('radio', { name: /West Signals/ }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(panelEditorStore.boardNodeKey).toBe(OTHER_BOARD_NODE);
+    expect(screen.getByRole('button', { name: /Board/ })).toHaveTextContent('West Signals');
   });
 
   it('a free pin wires the block and clicking it again clears it', async () => {
@@ -70,12 +88,12 @@ describe('Panel editor Wiring step', () => {
     await fireEvent.click(pin(/^#9 H3-G/));
     expect(within(row('Main 1')).getByText('wired')).toBeInTheDocument();
     expect(within(row('Main 1')).getByText('Eagle Creek Fascia · #9 H3-G')).toBeInTheDocument();
-    expect(pin(/^#9 H3-G: this block/)).toBeInTheDocument();
+    expect(pin(/^#9 H3-G: This block/)).toBeInTheDocument();
     expect(screen.getByText('1 of 2 wired')).toBeInTheDocument();
 
     await fireEvent.click(pin(/^#9 H3-G/));
     expect(within(row('Main 1')).getByText('needs a lamp')).toBeInTheDocument();
-    expect(pin(/^#9 H3-G: free/)).toBeInTheDocument();
+    expect(pin(/^#9 H3-G: Free/)).toBeInTheDocument();
   });
 
   it("shows another block's pin by that block's name", async () => {

@@ -73,6 +73,7 @@ export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): Block
     wiredCount: 1,
     nextAttentionSignalId: () => null,
     wiringFor: () => null,
+    pinHolder: () => null,
     canMoveTurnout: () => false,
     ...overrides,
   };

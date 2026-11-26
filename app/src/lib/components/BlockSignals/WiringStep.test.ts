@@ -340,6 +340,23 @@ describe('WiringStep', () => {
     expect(actions.placeLamp).toHaveBeenLastCalledWith('sig-1', 'red', 2);
   });
 
+  it('shows a pin another signal in this edit holds as used by that signal, and not choosable', async () => {
+    const holder = { signalId: 'sig-0', name: 'Signal 1', lamp: 'red' as const };
+    const actions = show({
+      facilityId: 'fac-1',
+      wiringFor: chosen(NODE_A, null, null),
+      pinHolder: (_signal: string, node: string, output: number) => (node === NODE_A && output === 3 ? holder : null),
+    });
+    const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+    const pin = within(grid).getByRole('button', { name: '#3 H2-R: Used by Signal 1 (red)' });
+    expect(pin).toBeDisabled();
+    expect(pin).toHaveClass('sibling');
+    expect(pin).toHaveTextContent(/^#3 H2-R\s*Signal 1 · Red$/);
+    await fireEvent.click(pin);
+    expect(actions.placeLamp).not.toHaveBeenCalled();
+    expect(screen.getByRole('region', { name: 'Pins' })).toHaveTextContent('Used by another signal');
+  });
+
   it('keeps pins of other facilities disabled', () => {
     show({ facilityId: 'fac-other', wiringFor: chosen(NODE_A, null, null) });
     expect(screen.getByRole('button', { name: '#3 H2-R: Used by Mill Signals' })).toBeDisabled();

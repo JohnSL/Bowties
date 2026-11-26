@@ -1596,3 +1596,56 @@ fn a_saved_group_grows_from_two_rungs_to_three_when_the_next_block_is_joined() {
         assert!(reused || reset, "Logic {logic} neither reused nor reset: {placed:?}");
     }
 }
+
+#[test]
+fn two_signals_choosing_the_same_output_on_one_board_each_name_the_other_and_block() {
+    let mut c = two_block_input();
+    let (first, second) = two_block_ids(&c.line);
+    c.wiring[1].green_output = 9;
+    let result = compile_block_signals(&c);
+    let in_use: Vec<(Option<&str>, &str)> = result
+        .issues
+        .iter()
+        .filter(|i| i.code == CompileIssueCode::OutputInUse)
+        .map(|i| (i.signal_id.as_deref(), i.detail.as_str()))
+        .collect();
+    assert_eq!(
+        in_use,
+        vec![
+            (Some(first.as_str()), "Output 9 is already used by Second signal."),
+            (Some(second.as_str()), "Output 9 is already used by First signal."),
+        ]
+    );
+    let held: Vec<_> = result
+        .issues
+        .iter()
+        .filter(|i| i.code == CompileIssueCode::OutputInUse)
+        .map(|i| i.binding_issue.clone())
+        .collect();
+    assert_eq!(
+        held,
+        vec![
+            Some(bowties_core::signaling::ProposalIssue::SignalOutputHeldBySignal {
+                signal_id: first.clone(),
+                node_key: c.wiring[0].node_key.clone(),
+                output: 9,
+                holder_signal_id: second.clone(),
+                holder_name: "Second signal".to_string(),
+            }),
+            Some(bowties_core::signaling::ProposalIssue::SignalOutputHeldBySignal {
+                signal_id: second.clone(),
+                node_key: c.wiring[1].node_key.clone(),
+                output: 9,
+                holder_signal_id: first.clone(),
+                holder_name: "First signal".to_string(),
+            }),
+        ]
+    );
+    assert_blocked(&result);
+
+    // The same output number on different boards is fine.
+    let mut other_boards = two_board_input();
+    other_boards.wiring[1].red_output = 10;
+    other_boards.wiring[1].green_output = 9;
+    assert_eq!(compile_block_signals(&other_boards).issues, vec![]);
+}

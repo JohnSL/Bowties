@@ -53,7 +53,7 @@ describe('Panel editor Blocks step', () => {
     expect(within(onPanel()).getByText('1 block')).toBeInTheDocument();
     expect(within(detected()).getByText('on panel')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add Main 1' })).not.toBeInTheDocument();
-    expect(screen.getByText('1 block on this panel')).toBeInTheDocument();
+    expect(screen.queryByText('1 block on this panel')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /1\s*Blocks\s*1 block/ })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Remove Main 1 from panel' }));
