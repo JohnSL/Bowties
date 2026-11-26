@@ -269,7 +269,7 @@
   .track-pick-signal:focus-visible rect { stroke: #0f6cbd; stroke-width: 2; }
   .track-end-chip:focus-visible rect { stroke-width: 2.5; }
   .track-ghost-signal:focus-visible text { text-decoration: underline; }
-  .occupancy.unavailable { fill: #fff; stroke: #8a929c; }
-  .occupancy.occupied { fill: #c50f1f; stroke: #8a0b16; }
-  .occupancy.clear { fill: #dff6dd; stroke: #107c10; }
+  .occupancy.unavailable { fill: var(--occupancy-unknown-fill, #fff); stroke: var(--occupancy-unknown-stroke, #8a929c); }
+  .occupancy.occupied { fill: var(--occupancy-occupied-fill, #c50f1f); stroke: var(--occupancy-occupied-stroke, #8a0b16); }
+  .occupancy.clear { fill: var(--occupancy-clear-fill, #dff6dd); stroke: var(--occupancy-clear-stroke, #107c10); }
 </style>

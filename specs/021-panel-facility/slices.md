@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 1/6 slices complete
+Status: 2/6
 
 ## Architecture
 
@@ -89,7 +89,7 @@ flowchart LR
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
 | S1 | One-board panel, end to end | HITL | None | done |
-| S2 | Panel card and channel usage | AFK | S1 | sketched |
+| S2 | Panel card and channel usage | AFK | S1 | done |
 | S3 | Blocks step and "lit when" | AFK | S1 | sketched |
 | S4 | Edit, release and remove | HITL | S1 | sketched |
 | S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | sketched |
@@ -153,14 +153,36 @@ flowchart LR
 **Boundary**: Components → effectiveLayoutStore → eventState
 **Re-cut after S1**: extend the existing `Panel/PanelCard.svelte` and `effectiveLayoutStore.panelStatus` (Empty / Incomplete / Wired from the record) rather than adding new ones. Pins on the card are labelled from the row's effective Lamp Selection (D1), never from the row number. `detectedBlocks` already carries `board`.
 **Blocked by**: S1
-**Status**: sketched
+**Status**: done
 
 **Acceptance criteria**:
-- [ ] The card lists blocks in panel order, each with its pin or "needs a lamp", and its lamp as lit, unlit, or unknown until an event is seen.
+- [ ] The card lists blocks in panel order, each with its pin or "needs a lamp", and its block's occupancy (occupied, clear, or no reading until an event is seen). *(2026-11-26 user decision: the tile shows occupancy in the shared occupancy colours, not the lamp state.)*
 - [ ] Status is Empty, "Incomplete, N need a lamp", or Wired. A block that is no longer detected, or a lamp whose board is missing, counts as Incomplete and is labelled on its entry.
 - [ ] Board changes not yet written show as waiting, per board.
 - [ ] The Channels panel's "Used by" names both the panel and the Automatic Block Signals facility for a shared block.
 - [ ] A layout with 24 lamps on two panels shows 2 cards.
+
+**UI contract**: [mockups.html](mockups.html) `#railroad`: card head (name, Panel chip, status chip), sub line "N blocks · lamps on <boards>" (or "No blocks yet."), then a grid of lamp tiles in panel order: lamp dot (none / lit / unlit), block name, "#pin label" or "needs a lamp", and the block's reading. Edit stays S4. Waiting writes use the ABS FacilityCard's per-board "waiting" list.
+
+**Complexity**: medium
+**User stories**: US2
+
+**Placement**: per-entry card view, status and "used by" stay in `effectiveLayoutStore` (ADR-0004 single owner). Block consumers go in a separate `channelUsedBy` derivation, not `channelUsageMap`: that map also drives `unboundChannelsForRole` (slot pickers), and a panel or ABS only *uses* a block (mockup note Q1). Live lamp and block state come from the lamp and block channels' resolved events (same as the Channels panel), in a pure util.
+
+**Tasks**:
+- [x] S2-T1: Integration test (`RailroadPanel.panel.integration.test.ts`): a saved panel shows tiles in panel order with pin labels from the effective Lamp Selection; a Lamp On event turns the tile lit; Channels "Used by" for a block shared with ABS names both facilities; two panels with 24 lamps show 2 cards.
+- [x] S2-T2: `effectiveLayoutStore`: `panelCardEntries(facilityId)` (block name or missing, lamp channel, board, pin and label from effective Lamp Selection, board missing); `panelStatus` counts missing blocks and boards; `channelUsedBy` (slot usage plus ABS and panel block uses); route and test support switch "Used by" to it.
+- [x] S2-T3: Pure lamp and block state for the card (reuse `deriveChannelState`).
+- [x] S2-T4: `PanelCard` tiles, sub line, status chip and per-board waiting (`facilityWriteOutcome`); `FacilitiesSection` passes `resolvedEventIds`.
+- [x] S2-T5: Docs (aiwiki owners and seams for `channelUsedBy`) and validation.
+
+**S2 validation record (2026-11-26)**:
+- Automated: vitest 151 files / 1871 tests green in the full run; svelte-check 113 errors / 2 warnings (baseline). Integration (`RailroadPanel.panel.integration.test.ts`): tiles in panel order with pins from Lamp Selection (row 2 shows #3); Lamp On lights the tile; "Used by" of a block shared with ABS names both; two panels with 24 lamps show 2 cards.
+- Built: `effectiveLayoutStore.panelCardEntries`, `panelStatus` (missing block, board or pin is Incomplete), `channelUsedBy` (slot usage plus block uses; `channelUsageMap` unchanged so slot pickers still offer blocks a facility only uses); `utils/panelLampState`; `PanelCard` tiles, sub line, status and waiting; shared `Facilities/WriteOutcomeList` (refactor: was duplicated in FacilityCard and PanelCard).
+- Differences from mockup `#railroad`: no Edit button (S4); tiles are not clickable (the mockup click fakes occupancy); "needs a pin" when a lamp row has Lamp Selection 0; missing block or board labelled on the tile.
+- Changed S1 behaviour: chip text is "Incomplete · N needs a lamp" (was a separate span); the S1 create walk stubs the roster board and has a 15 s stopgap timeout (see backlog).
+- 2026-11-26 user review: tile dots now use the Channels panel state indicator (shared `Railroad/ChannelStateIndicator`; lamp dot plus an occupancy dot on the reading), and every facility card uses one status badge in the panel style without the dot (shared `Facilities/StatusBadge`; the ABS/Block Indicator pulse dot is gone). Then: one occupancy palette everywhere (`--occupancy-*` tokens in app.css: the track diagram's red and light green, now also the Channels dots and the tiles); each tile has a single dot showing block occupancy (lamp state dropped from the card; `utils/panelLampState` removed). vitest 151 files / 1870 passed; svelte-check 113/2.
+- PENDING (user): running-app look against mockup `#railroad` and live lamp state on the bench.
 
 ### S3: Blocks step and "lit when" [AFK]
 
@@ -187,7 +209,7 @@ flowchart LR
 **Acceptance criteria**:
 - [ ] Moving a lamp from #6 to #12 and saving: #12 follows the block and #6 is reset.
 - [ ] Removing a block resets its pin. The block, its detector and a signals facility using it are unchanged.
-- [ ] Choosing another block's pin moves it, and a message says the other block now needs a lamp.
+- [ ] A pin another block on this panel holds can't be chosen until it is cleared on that block (decided 2026-11-26, same as ABS; already in place from S1).
 - [ ] A pin used outside Bowties shows its Lamp Description and can be used only after Release. The release is written together with the panel's changes.
 - [ ] Remove asks for confirmation naming the pins per board, then resets only those pins. The lamp channels leave the Channels panel and the blocks remain.
 - [ ] Cancelling the editor on an existing panel leaves it unchanged.
@@ -225,4 +247,4 @@ flowchart LR
 - [ ] A guard test fails if a route or component imports an edit-layer store directly.
 - [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
 
-<!-- Session: 2026-11-26 — S1 done. Next: S2 (AFK) or S3 (AFK). -->
+<!-- Session: 2026-11-26 — S1, S2 done. Next: S3 (AFK; re-pointing has no mockup UI, ask the user) or S4 (HITL). -->

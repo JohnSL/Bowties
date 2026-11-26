@@ -38,7 +38,7 @@
     /**
      * Resolves the facility-slot consumers of a channel for the "Used by"
      * column (Spec 018 / S4 — supplied by the route from
-     * `effectiveLayoutStore.channelUsageMap`). Optional: when absent, every
+     * `effectiveLayoutStore.channelUsedBy`: slot usage plus the blocks a signals facility or panel uses). Optional: when absent, every
      * row renders em-dash.
      */
     usedBy?: (channelId: string) => ReadonlyArray<{ facilityName: string; slotLabel: string }>;

@@ -20,3 +20,15 @@
            disabled:opacity-40 disabled:cursor-not-allowed;
   }
 }
+
+/* Block occupancy colours, shared by the track diagram, the Channels panel's state
+   dots and the panel card tiles. The light clear green is easier to tell from the
+   occupied red with red-green colour blindness than a saturated green. */
+:root {
+  --occupancy-occupied-fill: #c50f1f;
+  --occupancy-occupied-stroke: #8a0b16;
+  --occupancy-clear-fill: #dff6dd;
+  --occupancy-clear-stroke: #107c10;
+  --occupancy-unknown-fill: #fff;
+  --occupancy-unknown-stroke: #8a929c;
+}

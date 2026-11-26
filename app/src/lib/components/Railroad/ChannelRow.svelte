@@ -9,6 +9,7 @@
     type ChannelState,
   } from '$lib/utils/channelState';
   import { signalOutputLabel } from '$lib/utils/signalOutputLabels';
+  import ChannelStateIndicator, { type ChannelStateIndicatorState } from './ChannelStateIndicator.svelte';
 
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
@@ -136,18 +137,7 @@
 
 <tr class="channel-row">
   <td class="state-cell">
-    <span
-      class="occupancy-indicator"
-      class:occupied={stateClass === 'occupied'}
-      class:clear={stateClass === 'clear'}
-      class:lit={stateClass === 'lit'}
-      class:unlit={stateClass === 'unlit'}
-      class:unknown={stateClass === 'unknown'}
-      class:no-config={stateClass === 'no-config'}
-      title={stateTooltip}
-      aria-label={stateTooltip}
-      data-testid="occupancy-indicator"
-    ></span>
+    <ChannelStateIndicator state={stateClass as ChannelStateIndicatorState} label={stateTooltip} />
   </td>
   <td class="name-cell">
     <div class="name-cell-content">
@@ -230,40 +220,6 @@
     width: 30px;
     text-align: center;
     padding: 0.5rem 0;
-  }
-  .occupancy-indicator {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 1.5px solid var(--text-muted, #999);
-    background: transparent;
-  }
-  .occupancy-indicator.occupied {
-    width: 10px;
-    height: 10px;
-    border: none;
-    background: #d55e00;
-  }
-  .occupancy-indicator.clear {
-    border: none;
-    background: #009e73;
-  }
-  .occupancy-indicator.lit {
-    width: 10px;
-    height: 10px;
-    border: none;
-    background: #e6c200;
-    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
-  }
-  .occupancy-indicator.unlit {
-    border: none;
-    background: #555;
-  }
-  .occupancy-indicator.no-config {
-    border-style: dashed;
-    border-color: var(--text-muted, #999);
-    opacity: 0.6;
   }
   .name-cell {
     padding: 0.5rem 0.6rem;

@@ -44,6 +44,7 @@ import type {
   ConfigNode,
   EventRole,
   LeafConfigNode,
+  NodeConfigTree,
   TreeConfigValue,
 } from '$lib/types/nodeTree';
 import type {
@@ -56,6 +57,7 @@ import { isPlaceholderEventId } from '$lib/utils/eventIds';
 import { makeValueResolver } from '$lib/utils/displayResolution';
 import { resolveNodePartsFromSnip, type NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+import { signalOutputLabel } from '$lib/utils/signalOutputLabels';
 
 // Re-export the catalog store so consumers of the facade can drive it in tests
 // without reaching into the legacy bowties.svelte module directly.
@@ -195,6 +197,34 @@ class EffectiveLayoutStore {
   }
 
   /**
+   * Map of channelId → everything that uses it: the slot usage of `channelUsageMap`
+   * plus block uses (an Automatic Block Signals facility listing the block, a panel
+   * with an entry for it), one entry per facility. The Channels panel's "Used by"
+   * reads this; `channelUsageMap` stays slot-only because it drives the slot pickers
+   * and a panel or signals facility only *uses* a block (Spec 021 / S2).
+   */
+  get channelUsedByMap(): Map<string, ChannelUsageEntry[]> {
+    const map = new Map<string, ChannelUsageEntry[]>();
+    for (const [channelId, entries] of this.channelUsageMap) map.set(channelId, [...entries]);
+    const addBlockUse = (channelId: string, facility: { facilityId: string; name: string }) => {
+      const list = map.get(channelId) ?? [];
+      if (list.some((entry) => entry.facilityId === facility.facilityId)) return;
+      list.push({ facilityId: facility.facilityId, facilityName: facility.name, slotLabel: 'blocks' });
+      map.set(channelId, list);
+    };
+    for (const facility of facilitiesStore.facilities) {
+      for (const block of facility.blockSignals?.blocks ?? []) addBlockUse(block.blockId, facility);
+      for (const entry of facility.panel?.entries ?? []) addBlockUse(entry.blockId, facility);
+    }
+    return map;
+  }
+
+  /** Everything using `channelId` (see `channelUsedByMap`). */
+  channelUsedBy(channelId: string): ChannelUsageEntry[] {
+    return this.channelUsedByMap.get(channelId) ?? [];
+  }
+
+  /**
    * Unbound channels filtered by `role` (Spec 018 / S4 — D2: one-slot-
    * per-channel invariant). A channel is "unbound" when it does not
    * appear in any facility's slot bindings. The optional `excludeIds`
@@ -329,15 +359,69 @@ class EffectiveLayoutStore {
   }
 
   /**
-   * Spec 021 / S1 — Panel card status. `Empty` when the panel lists no blocks,
-   * `Incomplete` while some entries still lack a lamp (`needsLamp` counts them),
-   * `Wired` once every entry has one.
+   * Spec 021 / S1+S2 — Panel card status. `Empty` when the panel lists no blocks;
+   * `Incomplete` while an entry lacks a lamp (`needsLamp` counts them), its block is no
+   * longer detected, its lamp's board is missing, or its lamp row has no Lamp Selection;
+   * `Wired` otherwise.
    */
   panelStatus(facilityId: string): { status: 'Empty' | 'Incomplete' | 'Wired'; needsLamp: number } {
+    const record = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)?.panel?.entries ?? [];
+    if (record.length === 0) return { status: 'Empty', needsLamp: 0 };
+    const needsLamp = record.filter((entry) => !entry.lampChannelId).length;
+    const cards = this.panelCardEntries(facilityId);
+    const problem =
+      needsLamp > 0 ||
+      cards.some((entry) => entry.blockMissing || !entry.lamp || entry.lamp.boardMissing || entry.lamp.pin === null);
+    return { status: problem ? 'Incomplete' : 'Wired', needsLamp };
+  }
+
+  /**
+   * Spec 021 / S2 — the panel's entries in panel order, ready for the card. The block
+   * name comes from the block-occupancy channel (blockId is the channel id). The lamp's
+   * pin is the row's effective Lamp Selection (saved, draft, offline pending), never the
+   * row number (D1); it is `null` when the board is missing or the row has no pin set.
+   */
+  panelCardEntries(facilityId: string): PanelCardEntry[] {
     const entries = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)?.panel?.entries ?? [];
-    if (entries.length === 0) return { status: 'Empty', needsLamp: 0 };
-    const needsLamp = entries.filter((entry) => !entry.lampChannelId).length;
-    return { status: needsLamp > 0 ? 'Incomplete' : 'Wired', needsLamp };
+    return entries.map((entry) => {
+      const block = channelsStore.channels.find((ch) => ch.id === entry.blockId);
+      const lampChannel = entry.lampChannelId
+        ? channelsStore.channels.find((ch) => ch.id === entry.lampChannelId)
+        : undefined;
+      const binding = lampChannel?.binding;
+      let lamp: PanelCardEntry['lamp'] = null;
+      if (lampChannel && binding?.kind === 'lampRow') {
+        const tree = nodeRoster.allEntries.find((e) => e.nodeKey === binding.nodeKey)?.tree;
+        const pin = tree ? this._lampSelection(tree, binding.rowOrdinal) : null;
+        lamp = {
+          channelId: lampChannel.id,
+          nodeKey: binding.nodeKey,
+          boardName: resolveNodeNameForKey(binding.nodeKey),
+          boardMissing: !tree,
+          pin,
+          pinLabel: pin === null ? '' : signalOutputLabel(tree, pin),
+        };
+      }
+      return {
+        entryId: entry.entryId,
+        blockId: entry.blockId,
+        blockName: block?.name ?? '',
+        blockMissing: !block,
+        lamp,
+      };
+    });
+  }
+
+  /** Effective Lamp Selection of a Direct Lamp Control row; `null` when unset (0) or absent. */
+  private _lampSelection(tree: NodeConfigTree, rowOrdinal: number): number | null {
+    const segment = tree.segments.find((s) => s.name === 'Direct Lamp Control');
+    const row = segment
+      ? replicationInstances(segment.children, 'Lamp').find((instance) => instance.instance === rowOrdinal)
+      : undefined;
+    const leaf = row ? findLeafNamed(row.children, 'Lamp Selection') : undefined;
+    if (!leaf) return null;
+    const value = makeValueResolver(tree.nodeId)(leaf);
+    return value?.type === 'int' && value.value > 0 ? value.value : null;
   }
 
   /**
@@ -356,6 +440,35 @@ class EffectiveLayoutStore {
       boards: outcome.boards.map((b) => ({ ...b, nodeName: resolveNodeNameForKey(b.nodeKey) })),
     };
   }
+}
+
+/** Spec 021 / S2 — one panel entry as the card shows it. */
+export interface PanelCardEntry {
+  entryId: string;
+  blockId: string;
+  blockName: string;
+  blockMissing: boolean;
+  lamp: null | {
+    channelId: string;
+    nodeKey: string;
+    boardName: string;
+    boardMissing: boolean;
+    /** Effective Lamp Selection; `null` when the board is missing or no pin is set. */
+    pin: number | null;
+    pinLabel: string;
+  };
+}
+
+function findLeafNamed(nodes: ConfigNode[], name: string): LeafConfigNode | undefined {
+  for (const node of nodes) {
+    if (isLeaf(node)) {
+      if (node.name === name) return node;
+    } else {
+      const hit = findLeafNamed(node.children, name);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
 }
 
 /** A single facility-slot consumer of a channel. */

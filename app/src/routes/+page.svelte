@@ -1490,7 +1490,7 @@
   let slotPicker = $state<SlotPickerState | null>(null);
 
   function slotChannelUsedBy(channelId: string): ReadonlyArray<{ facilityName: string; slotLabel: string }> {
-    return effectiveLayoutStore.channelUsageMap.get(channelId) ?? [];
+    return effectiveLayoutStore.channelUsedBy(channelId);
   }
 
   function pickerSlotRequiredRole(facilityId: string, slotLabel: string): string | undefined {

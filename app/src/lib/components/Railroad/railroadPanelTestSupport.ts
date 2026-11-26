@@ -10,6 +10,8 @@ import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
 import type { InformationChannel } from '$lib/api/channels';
 import type { BlockSignalsPreview, BlockSignalsPreviewRequest, ListedBlock, TravelDirection } from '$lib/api/signaling';
 import { effectiveLayoutStore } from '$lib/layout';
+import type { NodeRosterEntry } from '$lib/stores/nodeRoster.svelte';
+import { wiringFacts } from '../Panel/panelEditorTestSupport';
 
 export type Invoke = Mock<(command: string, args?: unknown) => unknown>;
 export type IpcStubs = Record<string, (args?: unknown) => unknown>;
@@ -145,7 +147,7 @@ export function mockIpc(invoke: Invoke, ipc: IpcStubs = {}) {
 export async function renderRailroadPanel(resolvedEventIds?: ReadonlyMap<string, Record<string, string>>) {
   await behaviorTemplatesStore.loadBehaviorTemplates();
   // the route supplies Used by from the facade; do the same here
-  const usedBy = (channelId: string) => effectiveLayoutStore.channelUsageMap.get(channelId) ?? [];
+  const usedBy = (channelId: string) => effectiveLayoutStore.channelUsedBy(channelId);
   render(RailroadPanel, { props: { nodeName: stubNodeName, resolvedEventIds, usedBy } });
 }
 
@@ -444,4 +446,76 @@ export async function wirePanelBlocks(editor: HTMLElement, wiring: Array<[blockN
     await fireEvent.click(within(within(editor).getByRole('listbox', { name: 'Panel blocks' })).getByText(blockName));
     await fireEvent.click(within(editor).getByRole('button', { name: pin }));
   }
+}
+
+/**
+ * A Signal LCC roster entry whose Direct Lamp Control rows 1..`rows` each have a Lamp Selection
+ * leaf at address 1000 + row (where `compose_panel` stubs write it), holding `pinsByRow[row]`
+ * (0 = unset) and labelled from the Panel wiring fixture (`#9 H3-G`).
+ */
+export function lampBoardEntry(nodeKey: string, pinsByRow: Record<number, number> = {}, rows = 16): NodeRosterEntry {
+  const mapEntries = wiringFacts().boards[0].pins.map((pin) => ({ value: pin.output, label: pin.label }));
+  const nodeId = nodeKey.replace(/(..)(?=.)/g, '$1.');
+  const instances = Array.from({ length: rows }, (_, i) => {
+    const row = i + 1;
+    return {
+      kind: 'group', name: 'Lamp', description: null, instance: row, instanceLabel: `Lamp ${row}`, replicationOf: 'Lamp',
+      replicationCount: rows, path: ['seg:0', 'elem:0', `elem:0#${row}`], displayName: null,
+      children: [{
+        kind: 'leaf', name: 'Lamp Selection', description: null, elementType: 'int', address: 1000 + row, size: 1, space: 253,
+        path: ['seg:0', 'elem:0', `elem:0#${row}`, 'elem:0'], value: { type: 'int', value: pinsByRow[row] ?? 0 },
+        eventRole: null, constraints: { mapEntries },
+      }],
+    };
+  });
+  return {
+    nodeKey,
+    kind: 'live',
+    info: { snip_data: { manufacturer: 'RR-CirKits', model: 'Signal-LCC', user_name: `Board ${nodeKey.slice(-2)}`, user_description: '' } },
+    tree: {
+      nodeId,
+      identity: null,
+      segments: [{
+        name: 'Direct Lamp Control', description: null, origin: 0, space: 253,
+        children: [{
+          kind: 'group', name: 'Lamp', description: null, instance: 0, instanceLabel: 'Lamp', replicationOf: 'Lamp',
+          replicationCount: rows, path: ['seg:0', 'elem:0'], displayName: null, children: instances,
+        }],
+      }],
+    },
+    readStatus: 'read',
+  } as unknown as NodeRosterEntry;
+}
+
+/** Hydrate a saved panel: its block channels, one lamp channel per wired block, and the facility. */
+export function seedSavedPanel(opts: {
+  facilityId: string;
+  name: string;
+  nodeKey: string;
+  /** In panel order; `row` is the Direct Lamp Control row of its lamp, absent when it needs a lamp. */
+  entries: Array<{ blockId: string; row?: number }>;
+}) {
+  const lampChannels: InformationChannel[] = opts.entries.flatMap((entry) => entry.row === undefined ? [] : [{
+    id: `lamp:${opts.facilityId}:${entry.row}`,
+    name: `Lamp ${entry.row}`,
+    role: 'lamp-indicator',
+    style: 'single-led-direct-lamp',
+    ownership: 'user-owned',
+    binding: { kind: 'lampRow', nodeKey: opts.nodeKey, rowOrdinal: entry.row },
+  } as InformationChannel]);
+  channelsStore.hydrateBaseline([...channelsStore.channels, ...lampChannels]);
+  return {
+    facilityId: opts.facilityId,
+    templateId: 'panel',
+    name: opts.name,
+    slotBindings: { lamps: lampChannels.map((c) => c.id) },
+    panel: {
+      litWhen: 'occupied',
+      entries: opts.entries.map((entry, i) => ({
+        entryId: `${opts.facilityId}:e${i}`,
+        blockId: entry.blockId,
+        ...(entry.row === undefined ? {} : { lampChannelId: `lamp:${opts.facilityId}:${entry.row}` }),
+      })),
+    },
+  } as Facility;
 }

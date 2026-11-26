@@ -181,7 +181,7 @@
       {#each facilitiesStore.facilities as facility (facility.facilityId)}
         <li>
           {#if facility.templateId === PANEL_TEMPLATE_ID}
-            <PanelCard {facility} />
+            <PanelCard {facility} {resolvedEventIds} />
           {:else}
           <FacilityCard
             {facility}

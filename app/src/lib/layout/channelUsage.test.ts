@@ -129,3 +129,35 @@ describe('channelUsageMap — signal channel on an Automatic Block Signals facil
     ]);
   });
 });
+
+describe('channelUsedBy (Spec 021 / S2)', () => {
+  it('names the signals facility and the panel that both use a block, once each, and leaves channelUsageMap slot-only', () => {
+    channelsStore.hydrateBaseline([bod(1), lamp(1)]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'abs-1',
+        templateId: 'automatic-block-signals',
+        name: 'Mainline',
+        slotBindings: { signals: [] },
+        blockSignals: { blocks: [{ blockId: 'ch-bod-1' }, { blockId: 'ch-bod-1' }] },
+      } as unknown as Facility,
+      {
+        facilityId: 'p-1',
+        templateId: 'panel',
+        name: 'Fascia',
+        slotBindings: { lamps: ['ch-lamp-1'] },
+        panel: { litWhen: 'occupied', entries: [{ entryId: 'e1', blockId: 'ch-bod-1', lampChannelId: 'ch-lamp-1' }] },
+      },
+    ]);
+
+    expect(effectiveLayoutStore.channelUsedBy('ch-bod-1')).toEqual([
+      { facilityId: 'abs-1', facilityName: 'Mainline', slotLabel: 'blocks' },
+      { facilityId: 'p-1', facilityName: 'Fascia', slotLabel: 'blocks' },
+    ]);
+    expect(effectiveLayoutStore.channelUsedBy('ch-lamp-1')).toEqual([
+      { facilityId: 'p-1', facilityName: 'Fascia', slotLabel: 'lamps' },
+    ]);
+    expect(effectiveLayoutStore.channelUsedBy('nope')).toEqual([]);
+    expect(effectiveLayoutStore.channelUsageMap.has('ch-bod-1')).toBe(false);
+  });
+});

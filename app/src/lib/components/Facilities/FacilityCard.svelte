@@ -18,6 +18,8 @@
   import type { BlockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
   import type { FacilityDiagramEntry } from '$lib/stores/facilityDiagrams.svelte';
   import FacilitySlot from './FacilitySlot.svelte';
+  import WriteOutcomeList from './WriteOutcomeList.svelte';
+  import StatusBadge from './StatusBadge.svelte';
 
   let {
     facility,
@@ -61,10 +63,6 @@
   // Spec 020 / E5-T4: per-board write outcome from the Pending Change rows this
   // facility staged. While any are waiting the card is not shown as complete.
   const writeOutcome = $derived(effectiveLayoutStore.facilityWriteOutcome(facility.facilityId));
-
-  function plural(n: number): string {
-    return `${n} ${n === 1 ? 'change' : 'changes'}`;
-  }
 
   // Spec 020: the Automatic Block Signals editor creates and owns the facility's
   // signals, so its card draws them read-only as a track diagram (edited via the same editor).
@@ -194,11 +192,9 @@
       {/if}
       <span class="template-label">{template?.displayName ?? facility.templateId}</span>
       {#if writeOutcome.hasWaiting}
-        <span class="status-pill incomplete"><span class="pulse" aria-hidden="true"></span>Waiting</span>
+        <StatusBadge tone="incomplete" text="Waiting" />
       {:else}
-        <span class="status-pill" class:wired={status === 'Wired'} class:incomplete={status === 'Incomplete'}>
-          <span class="pulse" aria-hidden="true"></span>{status}
-        </span>
+        <StatusBadge tone={status === 'Wired' ? 'wired' : 'incomplete'} text={status} />
       {/if}
     </div>
     <div class="actions">
@@ -211,16 +207,7 @@
   </header>
 
   {#if writeOutcome.hasWaiting}
-    <ul class="write-outcome" aria-label="Write outcome" data-testid="facility-write-outcome">
-      {#each writeOutcome.boards as board (board.nodeKey)}
-        {#if board.waiting > 0}
-          <li>{plural(board.waiting)} waiting on {board.nodeName}{board.waitingReasons.length > 0 ? `: ${board.waitingReasons[0]}` : ''}</li>
-        {/if}
-        {#if board.notAttempted > 0}
-          <li>{plural(board.notAttempted)} not yet written to {board.nodeName}</li>
-        {/if}
-      {/each}
-    </ul>
+    <WriteOutcomeList boards={writeOutcome.boards} />
   {/if}
 
   {#if isAutomaticBlockSignals}
@@ -299,29 +286,6 @@
     font-size: 0.6875rem;
     color: var(--text-muted, #616161);
   }
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    padding: 0.125rem 0.5rem;
-    border-radius: 10px;
-  }
-  .status-pill .pulse {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-  .status-pill.incomplete {
-    background: #fff4ce;
-    color: #bc4b09;
-  }
-  .status-pill.wired {
-    background: #dcfce7;
-    color: #166534;
-  }
   .actions {
     display: flex;
     gap: 0.25rem;
@@ -352,13 +316,6 @@
     margin: 0;
     font-size: 0.75rem;
     color: var(--text-muted, #616161);
-  }
-  .write-outcome {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    font-size: 0.75rem;
-    color: #bc4b09;
   }
   .slot-arrow {
     display: flex;
