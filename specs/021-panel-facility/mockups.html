@@ -134,7 +134,7 @@
     display: flex; justify-content: flex-end; align-items: center; gap: 8px;
     padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg-subtle);
   }
-  .dialog-foot .foot-status { margin-right: auto; color: var(--text-muted); font-size: 12px; }
+  .dialog-foot [data-panel-cancel], .board-dialog .dialog-foot button:first-child { margin-right: auto; }
   .field-label { margin-bottom: 6px; color: var(--text-secondary); font-weight: 600; font-size: 12px; }
   .input, select.input {
     width: 100%; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 4px; background: #fff;
@@ -195,33 +195,69 @@
   .shortcut-row { display: flex; gap: 6px; align-items: center; }
   .shortcut-row select { flex: 1; }
 
+  #blocks .shortcut-row select { min-width: 0; }
+  #blocks .catalog { background: var(--bg-subtle); }
+  #b-available { background: white; }
+  #blocks .workspace { border-color: var(--border-strong); }
+  #blocks .workspace .pane-head { padding: 12px; background: #edf2f7; font-size: 14px; }
+  #b-panel .empty { border: 1px dashed var(--border-strong); border-radius: 6px; }
+  #b-panel .panel-order { display: grid; gap: 7px; }
+  #b-panel .list-item { border: 1px solid var(--border); border-radius: 5px; padding: 8px 8px 8px 0; }
+  #b-panel .selected { border-color: var(--brand); background: var(--bg-selected); }
+  #b-panel .position { min-width: 24px; text-align: center; font-weight: 650; color: var(--text-secondary); }
+  #b-panel .pick { border: 0; background: transparent; padding: 3px; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  #b-panel .pick span { display: block; }
+  #b-panel .grip {
+    flex: 0 0 17px; align-self: stretch; margin-block: -8px; display: grid; place-items: center;
+    border-right: 1px solid var(--border); color: #858585; cursor: grab; user-select: none;
+  }
+  #b-panel .grip::before {
+    content: ""; width: 8px; height: 12px;
+    background: radial-gradient(circle, currentColor 1px, transparent 1.25px) 0 0 / 4px 4px;
+  }
+  #b-panel .grip:hover { color: var(--text-secondary); }
+  #b-panel .grip:active { cursor: grabbing; }
+  #b-panel [data-drop] { position: relative; }
+  #b-panel [data-drop]::after {
+    content: ""; position: absolute; left: 0; right: 0; height: 3px;
+    border-radius: 2px; background: var(--brand); pointer-events: none;
+  }
+  #b-panel [data-drop="before"]::after { top: -5px; }
+  #b-panel [data-drop="after"]::after { bottom: -5px; }
+  @media (min-width: 821px) {
+    #blocks .panes { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  }
+
   .segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 4px; overflow: hidden; }
   .segment { padding: 3px 10px; cursor: pointer; font-size: 12px; background: #fff; }
   .segment + .segment { border-left: 1px solid var(--border-strong); }
   .segment.selected { background: var(--brand); color: #fff; }
 
-  .connector { margin-top: 4px; }
-  .connector-label { margin-bottom: 4px; color: var(--text-muted); font-size: 11px; }
-  .pin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .board-picker { display: flex; gap: 12px; align-items: center; }
+  .board-field { flex: 1; display: flex; justify-content: space-between; align-items: center; text-align: left; }
+  .board-detail { display: block; font-size: 11px; color: var(--text-muted); }
+  .board-change, .connector-label { color: var(--brand); }
+  .board-dialog { padding: 0; max-width: min(440px, 95vw); }
+  .board-dialog::backdrop { background: rgb(0 0 0 / 30%); }
+  .board-option { display: flex; gap: 8px; padding: 8px; }
+  .board-option:has(:checked) { background: var(--bg-selected); box-shadow: inset 3px 0 var(--brand); }
+  .connector-label { align-self: center; padding: 0 8px; font-size: 12px; font-weight: 700; }
+  .pin-grid { display: grid; grid-template-columns: auto repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
   .pin {
-    padding: 5px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: center;
-    font-size: 11px; background: #fff; cursor: pointer;
+    min-width: 0; padding: 4px 2px; border: 1px solid var(--border); border-radius: 4px; text-align: center;
+    font-size: 11px; line-height: 1.2; background: #fff; cursor: pointer;
   }
-  .pin .pin-id { display: block; font-family: Consolas, monospace; font-weight: 600; }
+  .pin .pin-id { display: block; font-weight: 650; white-space: nowrap; }
   .pin .pin-owner { display: block; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pin:hover:not(.blocked) { border-color: var(--brand); }
-  .pin.blocked { background: #f0f0f0; color: #8a8a8a; cursor: not-allowed; }
-  .pin.outside { background: #faf6ee; border-style: dashed; }
-  .pin.panel { background: #f4f8fc; }
-  .pin.mine { border: 2px solid var(--brand); background: var(--bg-selected); }
-  .pin.mine .pin-owner { color: var(--brand); }
-  .legend { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-muted); font-size: 11px; }
-  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 4px; border: 1px solid var(--border); vertical-align: -1px; }
-  .legend .l-free::before { background: #fff; }
-  .legend .l-panel::before { background: #f4f8fc; }
-  .legend .l-outside::before { background: #faf6ee; border-style: dashed; }
-  .legend .l-blocked::before { background: #f0f0f0; }
-  .legend .l-mine::before { background: var(--bg-selected); border: 2px solid var(--brand); }
+  .pin:hover:enabled { border-color: var(--brand); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text-muted); font-size: 11px; }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 4px; border: 1px solid var(--border); border-radius: 3px; background: white; vertical-align: -2px; }
+  .pin:disabled, .legend .l-blocked::before { background: #eef1f5; color: var(--text-muted); }
+  .pin:disabled { cursor: not-allowed; }
+  .pin.outside, .legend .l-outside::before { border: 1px dashed #b07a00; background: #fff8e6; }
+  .pin.mine, .legend .l-mine::before { border-color: var(--brand); background: var(--brand); color: white; }
+  .pin.mine { box-shadow: 0 0 0 2px var(--bg-selected); }
+  .pin.mine .pin-owner { color: inherit; }
 
   .note { padding: 6px 8px; border-radius: 4px; font-size: 12px; }
   .note.warn { color: var(--warning); background: var(--warning-bg); }
@@ -390,11 +426,7 @@
         <div class="dialog-body">
           <ol class="stepper" data-stepper="blocks" aria-label="Panel editor steps"></ol>
           <div class="panes">
-            <div class="pane">
-              <div class="pane-head"><span>On this panel</span><span class="chip" id="b-count">0 blocks</span></div>
-              <div class="pane-body" id="b-panel"></div>
-            </div>
-            <div class="pane">
+            <div class="pane catalog">
               <div class="pane-head"><span>Detected blocks</span></div>
               <div class="pane-body">
                 <div>
@@ -405,25 +437,28 @@
                       <option value="board:Eagle Creek BOD">Eagle Creek BOD · detector board</option>
                       <option value="board:Helix BOD">Helix BOD · detector board</option>
                     </select>
-                    <button class="btn" id="b-add-source">Add</button>
+                    <button class="btn" id="b-add-source">Add all →</button>
                   </div>
                 </div>
                 <input class="input" type="search" id="b-search" placeholder="Search blocks">
                 <div class="list" id="b-available"></div>
               </div>
             </div>
+            <div class="pane workspace">
+              <div class="pane-head"><span>Blocks on this panel</span><span class="chip" id="b-count">0 blocks</span></div>
+              <div class="pane-body" id="b-panel"></div>
+            </div>
           </div>
         </div>
         <div class="dialog-foot">
           <button class="btn" data-panel-cancel>Cancel</button>
-          <span class="foot-status" id="b-foot"></span>
           <button class="btn btn-primary" id="b-next">Next: Wiring</button>
         </div>
       </div>
       <aside class="design-notes">
         <h3>Design notes</h3>
         <ul>
-          <li>Try it: add Mainline Eastbound, then a helix block, then reorder or remove one.</li>
+          <li>Try it: add Mainline Eastbound, then add Helix Lower. Drag its six-dot grip to a new position, or use the arrows to move one place at a time.</li>
           <li>"Add all blocks from" is only a way to select. The panel doesn't follow the signals facility afterwards, and removing that facility doesn't change the panel.</li>
           <li>Blocks are listed by detector board. The meta line names any signals facility a block belongs to, as context.</li>
           <li>No track diagram. A panel's blocks have no travel order or connections of their own, so a diagram would need a track model for the whole layout or a freehand editor. See decision D4.</li>
@@ -467,7 +502,6 @@
         </div>
         <div class="dialog-foot">
           <button class="btn" data-panel-cancel>Cancel</button>
-          <span class="foot-status" id="w-foot"></span>
           <button class="btn" id="w-back">Back</button>
           <button class="btn btn-primary" id="w-done">Done</button>
         </div>
@@ -477,7 +511,7 @@
         <ul>
           <li>The mockup data wires the four Main blocks to pins out of order (#9, #3, #14, #6), as a PCB layout might.</li>
           <li>Clicking the block's own pin again clears it, as in the signals Wiring step. There is no separate Clear button.</li>
-          <li>Pins this panel already uses show their block's name. Choosing one moves that pin to the selected block, and the block that had it then needs a lamp. The status line says so.</li>
+          <li>Pins this panel already uses show their block's name. To reassign one, clear it on its current block first.</li>
           <li>Pins a mast or another facility uses can't be chosen. Pins used outside Bowties show their Lamp Description and can be released, as in the signals Wiring step.</li>
           <li>"Lit when" is one panel setting. Each block can override it, for example for a "clear" lamp on a green LED.</li>
           <li>Done saves even if some blocks have no lamp yet. The panel is then Incomplete and the card says how many need a lamp.</li>
@@ -794,33 +828,88 @@
   }
 
   // ---------- Blocks step ----------
+  let pickedBlock = null;
   function addBlock(name) {
-    if (!state.panel.includes(name)) state.panel.push(name);
+    if (!state.panel.includes(name)) {
+      state.panel.push(name);
+      pickedBlock = name;
+    }
   }
   function renderBlocks() {
     const panelEl = document.getElementById("b-panel");
+    if (!state.panel.includes(pickedBlock)) pickedBlock = null;
     document.getElementById("b-count").textContent = `${state.panel.length} block${state.panel.length === 1 ? "" : "s"}`;
     if (!state.panel.length) {
       panelEl.innerHTML = `<div class="empty"><strong>No blocks on this panel yet</strong>
-        <span>Add the blocks whose lamps are on this panel. You can add all of a signals facility's or a detector board's blocks at once.</span></div>`;
+        <span>Choose a detected block and click Add →. Its position here sets the panel order.</span></div>`;
     } else {
       const list = document.createElement("div");
-      list.className = "list";
+      list.className = "panel-order";
+      let draggedRow = null;
+      function clearDropMark() {
+        list.querySelector("[data-drop]")?.removeAttribute("data-drop");
+      }
+      function dropIndex(y) {
+        return Array.from(list.children).filter((row) => {
+          const rect = row.getBoundingClientRect();
+          return y >= rect.top + rect.height / 2;
+        }).length;
+      }
+      list.addEventListener("dragover", (event) => {
+        if (!draggedRow) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const i = dropIndex(event.clientY);
+        clearDropMark();
+        (list.children[i] || list.lastElementChild).dataset.drop = i === list.children.length ? "after" : "before";
+      });
+      list.addEventListener("dragleave", (event) => {
+        if (!list.contains(event.relatedTarget)) clearDropMark();
+      });
+      list.addEventListener("drop", (event) => {
+        if (!draggedRow) return;
+        event.preventDefault();
+        const from = Array.from(list.children).indexOf(draggedRow);
+        const slot = dropIndex(event.clientY);
+        moveBlock(from, slot > from ? slot - 1 : slot);
+        panelEl.querySelector(".selected .pick").focus();
+      });
       state.panel.forEach((name, i) => {
         const b = blockByName[name];
         const row = document.createElement("div");
-        row.className = "list-item";
-        row.innerHTML = `<span class="meta" style="width:18px">${i + 1}</span>
-          <div class="grow"><div class="name">${name}</div><div class="meta">${b.board}${b.facility ? " · " + b.facility : ""}</div></div>`;
-        const up = btn("↑", i === 0, () => { swap(i, i - 1); });
-        const down = btn("↓", i === state.panel.length - 1, () => { swap(i, i + 1); });
+        row.className = "list-item selectable" + (name === pickedBlock ? " selected" : "");
+        row.innerHTML = `<span class="grip" draggable="true" title="Drag to reorder"></span><span class="position">${i + 1}</span>
+          <button type="button" class="grow pick" aria-pressed="${name === pickedBlock}"><span class="name">${name}</span><span class="meta">${b.board}${b.facility ? " · " + b.facility : ""}</span></button>`;
+        row.addEventListener("click", (event) => {
+          if (event.target.closest(".btn")) return;
+          pickedBlock = name;
+          renderBlocks();
+          panelEl.querySelector(".selected .pick").focus();
+        });
+        row.querySelector(".grip").addEventListener("dragstart", (event) => {
+          draggedRow = row;
+          pickedBlock = name;
+          for (const item of list.children) {
+            item.classList.toggle("selected", item === row);
+            item.querySelector(".pick").setAttribute("aria-pressed", String(item === row));
+          }
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-panel-block", name);
+          event.dataTransfer.setDragImage(row, 18, row.offsetHeight / 2);
+        });
+        row.addEventListener("dragend", () => { draggedRow = null; clearDropMark(); });
+        const up = btn("↑", i === 0, () => { moveByArrow(i, i - 1); });
+        const down = btn("↓", i === state.panel.length - 1, () => { moveByArrow(i, i + 1); });
         const rm = btn("×", false, () => {
           state.panel.splice(i, 1);
           delete state.wiring[name];
           if (state.selected === name) state.selected = null;
+          if (pickedBlock === name) pickedBlock = state.panel[Math.min(i, state.panel.length - 1)] ?? null;
           renderAll();
         });
-        up.title = "Move up"; down.title = "Move down"; rm.title = "Remove from panel";
+        up.title = `Move ${name} up`; down.title = `Move ${name} down`; rm.title = `Remove ${name} from panel`;
+        for (const button of [up, down, rm]) button.setAttribute("aria-label", button.title);
+        up.dataset.move = "up"; down.dataset.move = "down";
         row.append(up, down, rm);
         list.appendChild(row);
       });
@@ -848,19 +937,29 @@
           c.className = "chip"; c.textContent = "on panel";
           row.appendChild(c);
         } else {
-          row.appendChild(btn("Add", false, () => { addBlock(b.name); renderAll(); }, "btn-small"));
+          const add = btn("Add →", false, () => {
+            addBlock(b.name);
+            renderAll();
+            panelEl.querySelector(".selected .pick").focus();
+          }, "btn-small");
+          add.setAttribute("aria-label", `Add ${b.name} to panel`);
+          row.appendChild(add);
         }
         avail.appendChild(row);
       });
     });
     if (!Object.keys(groups).length) avail.innerHTML = `<div class="list-item meta">No blocks match.</div>`;
 
-    document.getElementById("b-foot").textContent = state.panel.length ? `${state.panel.length} block${state.panel.length > 1 ? "s" : ""} on this panel` : "Nothing is created until Done on Wiring.";
   }
-  function swap(a, b) {
-    const p = state.panel;
-    [p[a], p[b]] = [p[b], p[a]];
+  function moveBlock(from, to) {
+    [pickedBlock] = state.panel.splice(from, 1);
+    state.panel.splice(to, 0, pickedBlock);
     renderAll();
+  }
+  function moveByArrow(a, b) {
+    moveBlock(a, b);
+    const moved = document.querySelector("#b-panel .selected");
+    (moved.querySelector(`[data-move="${b < a ? "up" : "down"}"]:enabled`) || moved.querySelector(".pick")).focus();
   }
   function btn(text, disabled, onClick, cls) {
     const b = document.createElement("button");
@@ -929,8 +1028,6 @@
 
     renderDetail();
 
-    document.getElementById("w-foot").textContent = !state.panel.length ? "" :
-      need ? `${need} block${need > 1 ? "s" : ""} without a lamp. Done saves the panel as Incomplete.` : "Every block has a lamp.";
     document.getElementById("w-done").disabled = !state.panel.length;
   }
 
@@ -958,45 +1055,47 @@
 
     // board
     const bWrap = document.createElement("div");
-    bWrap.innerHTML = `<div class="field-label">Board</div>`;
-    const sel = document.createElement("select");
-    sel.className = "input";
-    Object.entries(BOARDS).forEach(([n, bd]) => {
-      const o = document.createElement("option");
-      o.value = n; o.textContent = `${n} · ${bd.kind}`; o.selected = n === boardName;
-      sel.appendChild(o);
+    bWrap.className = "board-picker";
+    bWrap.innerHTML = `<strong>Board</strong><button class="btn board-field" aria-haspopup="dialog"><span><strong>${boardName}</strong><small class="board-detail">${BOARDS[boardName].kind}</small></span><span class="board-change">Change ▾</span></button>`;
+    bWrap.querySelector("button").onclick = () => chooseBoard(boardName, next => {
+      if (next !== boardName) {
+        state.lastBoard = next;
+        delete state.wiring[name];
+        state.message = null;
+        renderAll();
+        el.querySelector(".board-field").focus();
+      }
     });
-    sel.addEventListener("change", () => {
-      state.lastBoard = sel.value;
-      if (state.wiring[name] && state.wiring[name].board !== sel.value) delete state.wiring[name];
-      renderAll();
-    });
-    bWrap.appendChild(sel);
     el.appendChild(bWrap);
 
     // pins
     const board = BOARDS[boardName];
     const pinWrap = document.createElement("div");
-    pinWrap.innerHTML = `<div class="field-label">Pin</div>`;
+    pinWrap.innerHTML = `<h3>Pins on ${boardName}</h3><p class="board-detail">Choose a free pin for ${name}, or select its pin again to clear it.</p>`;
+    const grid = document.createElement("div");
+    grid.className = "pin-grid";
+    pinWrap.appendChild(grid);
     HEADS.forEach((h) => {
-      const conn = document.createElement("div");
-      conn.className = "connector";
-      conn.innerHTML = `<div class="connector-label">Head ${h}</div>`;
-      const grid = document.createElement("div");
-      grid.className = "pin-grid";
+      const header = document.createElement("span");
+      header.className = "connector-label";
+      header.textContent = h;
+      grid.appendChild(header);
       board.pins.filter((p) => p.head === h).forEach((p) => {
         const b2 = document.createElement("button");
         b2.type = "button";
         b2.className = "pin";
         const owner = pinOwner(boardName, p.n);
         const key = `${boardName}:${p.n}`;
-        let ownerText = "free";
+        let ownerText = "Free";
         if (board.blocked[p.n]) { b2.classList.add("blocked"); ownerText = board.blocked[p.n]; b2.title = board.blocked[p.n]; }
         else if (board.outside[p.n] && !state.released[key]) { b2.classList.add("outside"); ownerText = `Outside Bowties · “${board.outside[p.n]}”`; }
-        else if (owner === name) { b2.classList.add("mine"); ownerText = "this block"; }
-        else if (owner) { b2.classList.add("panel"); ownerText = owner; }
+        else if (owner === name) { b2.classList.add("mine"); ownerText = name; }
+        else if (owner) { ownerText = owner; }
+        b2.disabled = Boolean(board.blocked[p.n] || (owner && owner !== name));
+        b2.title = `#${p.n} ${p.label} · ${ownerText}`;
+        b2.setAttribute("aria-pressed", String(owner === name));
         b2.innerHTML = `<span class="pin-id">#${p.n} ${p.label}</span><span class="pin-owner">${ownerText}</span>`;
-        if (!board.blocked[p.n]) {
+        if (!b2.disabled) {
           b2.addEventListener("click", () => {
             if (board.outside[p.n] && !state.released[key]) {
               state.message = { kind: "warn", text: `#${p.n} ${p.label} is used outside Bowties as “${board.outside[p.n]}”.`, release: key };
@@ -1010,10 +1109,6 @@
               renderAll();
               return;
             }
-            if (owner) {
-              delete state.wiring[owner];
-              state.message = { kind: "warn", text: `Moved #${p.n} ${p.label} from ${owner} to ${name}. ${owner} now needs a lamp.` };
-            }
             state.wiring[name] = { board: boardName, pin: p.n };
             state.lastBoard = boardName;
             renderAll();
@@ -1021,14 +1116,12 @@
         }
         grid.appendChild(b2);
       });
-      conn.appendChild(grid);
-      pinWrap.appendChild(conn);
     });
     el.appendChild(pinWrap);
 
     const legend = document.createElement("div");
     legend.className = "legend";
-    legend.innerHTML = `<span class="l-free">free</span><span class="l-mine">this block</span><span class="l-panel">another block on this panel</span><span class="l-outside">used outside Bowties</span><span class="l-blocked">used by Bowties elsewhere</span>`;
+    legend.innerHTML = `<span class="l-mine">Selected lamp</span><span class="l-blocked">Used by another block or facility</span><span class="l-outside">Used outside Bowties</span><span>Free</span>`;
     el.appendChild(legend);
 
     if (state.message) {
@@ -1060,6 +1153,33 @@
     });
     lw.appendChild(seg);
     el.appendChild(lw);
+  }
+
+  function chooseBoard(current, confirm) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "dialog board-dialog";
+    dialog.setAttribute("aria-labelledby", "board-picker-title");
+    dialog.innerHTML = `<form method="dialog"><div class="dialog-head" id="board-picker-title">Choose a Signal LCC</div>
+      <div class="dialog-body"><input type="search" class="input" placeholder="Search Signal LCC nodes" aria-label="Search Signal LCC nodes">
+      <div class="board-options"></div><p class="board-detail" hidden>No matching boards.</p></div>
+      <div class="dialog-foot"><button type="button" class="btn">Cancel</button><button class="btn btn-primary" value="choose">Use this node</button></div></form>`;
+    let choice = current;
+    const search = dialog.querySelector("input");
+    const options = dialog.querySelector(".board-options");
+    const submit = dialog.querySelector('[value="choose"]');
+    function filter() {
+      const matches = Object.keys(BOARDS).filter(n => `${n} ${BOARDS[n].kind}`.toLowerCase().includes(search.value.trim().toLowerCase()));
+      options.innerHTML = matches.map(n => `<label class="board-option"><input type="radio" name="board" value="${n}" ${choice === n ? "checked" : ""}><span><strong>${n}</strong><small class="board-detail">${BOARDS[n].kind}</small></span></label>`).join("");
+      dialog.querySelector("p").hidden = matches.length > 0;
+      submit.disabled = !matches.includes(choice);
+    }
+    options.onchange = e => { choice = e.target.value; submit.disabled = false; };
+    search.oninput = filter;
+    dialog.querySelector('[type="button"]').onclick = () => dialog.close();
+    dialog.onclose = () => { dialog.remove(); if (dialog.returnValue === "choose") confirm(choice); };
+    filter();
+    document.body.appendChild(dialog);
+    dialog.showModal();
   }
 
   function loadExample() {
