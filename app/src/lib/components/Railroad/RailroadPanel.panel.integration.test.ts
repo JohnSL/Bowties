@@ -30,7 +30,7 @@ const PIN_3 = /^#3 H1-R:/;
 const PIN_14 = /^#14 H4-Y:/;
 
 async function addBlocks(editor: HTMLElement, names: string[]) {
-  for (const name of names) await fireEvent.click(within(editor).getByRole('button', { name: `Add ${name}` }));
+  for (const name of names) await fireEvent.click(within(editor).getByRole('button', { name: `Add ${name} to panel` }));
 }
 
 async function goToWiring(editor: HTMLElement) {
@@ -343,7 +343,7 @@ describe('RailroadPanel Panel edit (Spec 021 / S4)', () => {
 
   it('Edit opens the editor with the panel blocks listed and, on Wiring, each block on its pin', async () => {
     const editor = await openEdit(composeStub([], {}));
-    const onPanel = within(editor).getByRole('region', { name: 'On this panel' });
+    const onPanel = within(editor).getByRole('region', { name: 'Blocks on this panel' });
     expect(within(onPanel).getByText('Cedar Hill')).toBeInTheDocument();
     expect(within(onPanel).getByText('Mill curve')).toBeInTheDocument();
 
@@ -468,13 +468,13 @@ describe('RailroadPanel Blocks and lit when (Spec 021 / S3)', () => {
     const source = within(editor).getByLabelText('Add all blocks from');
     expect(source).toBeEnabled();
     await fireEvent.change(source, { target: { value: within(source).getByRole('option', { name: 'Mainline Eastbound · Automatic Block Signals' }).getAttribute('value') } });
-    await fireEvent.click(within(within(editor).getByRole('region', { name: 'Detected blocks' })).getByRole('button', { name: 'Add' }));
-    const onPanel = within(editor).getByRole('region', { name: 'On this panel' });
-    expect(within(onPanel).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    await fireEvent.click(within(within(editor).getByRole('region', { name: 'Detected blocks' })).getByRole('button', { name: 'Add all →' }));
+    const onPanel = within(editor).getByRole('region', { name: 'Blocks on this panel' });
+    expect(within(onPanel).getAllByRole('row').slice(1).map((item) => item.textContent)).toEqual([
       expect.stringContaining('Mill curve'), expect.stringContaining('River bridge'), expect.stringContaining('Cedar Hill'),
     ]);
     await fireEvent.click(within(onPanel).getByRole('button', { name: 'Move Mill curve down' }));
-    expect(within(onPanel).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    expect(within(onPanel).getAllByRole('row').slice(1).map((item) => item.textContent)).toEqual([
       expect.stringContaining('River bridge'), expect.stringContaining('Mill curve'), expect.stringContaining('Cedar Hill'),
     ]);
     await goToWiring(editor);

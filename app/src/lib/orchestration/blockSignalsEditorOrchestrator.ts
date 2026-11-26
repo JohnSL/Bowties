@@ -190,6 +190,7 @@ export const setTurnoutShape = (turnoutId: string, shape: TurnoutShape): void =>
 export const addSignaledBlock = (block: SelectedDetectedBlock) => o.edit(() => store.addBlock(block));
 export const removeSignaledBlock = (blockId: string) => o.edit(() => store.removeBlock(blockId));
 export const moveSignaledBlock = (blockId: string, delta: -1 | 1) => o.edit(() => store.moveBlock(blockId, delta));
+export const moveSignaledBlockTo = (blockId: string, toIndex: number) => o.edit(() => store.moveBlockTo(blockId, toIndex));
 export const setJoinedToPrevious = (blockId: string, joined: boolean) =>
   o.edit(() => store.setJoinedToPrevious(blockId, joined));
 /** Resolves to the new turnout's ID once the preview has refreshed. */
@@ -227,6 +228,7 @@ export const blockSignalsEditorActions = {
   addBlock: addSignaledBlock,
   removeBlock: removeSignaledBlock,
   moveBlock: moveSignaledBlock,
+  moveBlockTo: moveSignaledBlockTo,
   setJoinedToPrevious,
   addTurnout,
   renameTurnout,

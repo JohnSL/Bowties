@@ -27,4 +27,17 @@ it('offers accessible icon buttons that move only in enabled directions', async 
   await fireEvent.click(up);
   expect(onMove).toHaveBeenCalledTimes(2);
   expect(onMove).toHaveBeenLastCalledWith(-1);
+  expect(screen.queryByRole('button', { name: /Remove/ })).not.toBeInTheDocument();
+});
+
+it('adds a matching remove icon button when asked', async () => {
+  const onRemove = vi.fn();
+  render(ReorderButtons, {
+    props: { name: 'Cedar Hill', canMoveUp: true, canMoveDown: true, onMove: vi.fn(), removeLabel: 'Remove Cedar Hill from panel', onRemove },
+  });
+  const remove = screen.getByRole('button', { name: 'Remove Cedar Hill from panel' });
+  expect(remove).toHaveClass('icon-btn');
+  expect(remove.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
+  await fireEvent.click(remove);
+  expect(onRemove).toHaveBeenCalledOnce();
 });

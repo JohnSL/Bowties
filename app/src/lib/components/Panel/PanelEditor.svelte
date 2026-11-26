@@ -144,7 +144,7 @@
   .panel-editor :global(.list-item) { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--pe-border-soft); }
   .panel-editor :global(.list-item.selectable) { padding: 6px 8px; border-radius: 4px; cursor: pointer; }
   .panel-editor :global(.list-item.selectable:hover) { background: #f5f5f5; }
-  .panel-editor :global(.list-item.selected) { background: var(--pe-selected); }
+  .panel-editor :global(.list-item.selected) { background: var(--pe-selected); box-shadow: inset 3px 0 0 var(--pe-brand); }
   .panel-editor :global(.grow) { flex: 1; min-width: 0; }
   .panel-editor :global(.name) { font-weight: 600; }
   .panel-editor :global(.meta) { color: var(--pe-muted); font-size: 11px; }
@@ -165,5 +165,8 @@
   @media (max-width: 760px), (max-height: 640px) {
     .workspace { overflow-y: auto; }
     .panel-editor :global(.panes) { grid-template-columns: 1fr; flex: none; }
+  }
+  @media (min-width: 821px) {
+    .panel-editor :global(.blocks-panes) { grid-template-columns: minmax(0, 9fr) minmax(0, 11fr); }
   }
 </style>

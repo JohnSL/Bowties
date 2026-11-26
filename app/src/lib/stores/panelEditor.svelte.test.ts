@@ -62,6 +62,30 @@ describe('panelEditorStore blocks step', () => {
     expect(store.entries.map((e) => e.entryId)).toEqual([a.entryId, b.entryId]);
   });
 
+  it('moves an entry to an arbitrary valid index without changing composition, and ignores invalid moves', () => {
+    const entries = [
+      { entryId: 'a', blockId: 'block:a', blockName: 'Block A', lamp: { nodeKey: 'node1', output: 3 }, litWhen: 'clear' as const },
+      { entryId: 'b', blockId: 'block:b', blockName: 'Block B' },
+      { entryId: 'c', blockId: 'block:c', blockName: 'Block C', lamp: { nodeKey: 'node2', output: 4 } },
+      { entryId: 'd', blockId: 'block:d', blockName: 'Block D' },
+    ];
+    store.startEdit({ facilityId: 'f', name: 'Panel', litWhen: 'occupied', entries });
+    store.selectEntry('a');
+
+    store.moveEntryTo('a', 3);
+    expect(store.entries).toEqual([entries[1], entries[2], entries[3], entries[0]]);
+    expect(store.selectedEntryId).toBe('a');
+    store.moveEntryTo('a', 1);
+    expect(store.entries).toEqual([entries[1], entries[0], entries[2], entries[3]]);
+
+    for (const [id, index] of [['missing', 0], ['a', -1], ['a', 4], ['a', 1.5], ['a', NaN], ['a', Infinity], ['a', 1]] as const) {
+      const before = store.entries;
+      store.moveEntryTo(id, index);
+      expect(store.entries).toBe(before);
+      expect(store.entries).toEqual([entries[1], entries[0], entries[2], entries[3]]);
+    }
+  });
+
   it('removes an entry override when restoring the panel default', () => {
     store.start('P');
     store.addBlock(A);

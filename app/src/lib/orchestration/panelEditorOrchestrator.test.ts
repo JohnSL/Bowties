@@ -53,6 +53,20 @@ async function openOnWiring(owners: Record<number, PinOwner> = {}) {
 describe('panelEditorOrchestrator direct editing intents', () => {
   beforeEach(() => store.reset());
 
+  it('exposes arbitrary entry reorder through orchestrator and action intents', () => {
+    actions.startPanelEditor('Panel');
+    actions.addBlocks([
+      { blockId: 'block:a', name: 'Block A' },
+      { blockId: 'block:b', name: 'Block B' },
+      { blockId: 'block:c', name: 'Block C' },
+    ]);
+    const [a, b, c] = store.entries;
+    actions.moveEntryTo(a.entryId, 2);
+    expect(store.entries.map((entry) => entry.entryId)).toEqual([b.entryId, c.entryId, a.entryId]);
+    panelEditorOrchestrator.moveEntryTo(a.entryId, 0);
+    expect(store.entries.map((entry) => entry.entryId)).toEqual([a.entryId, b.entryId, c.entryId]);
+  });
+
   it('adds unique blocks, moves them within bounds, and sets or clears lit-when overrides', () => {
     actions.startPanelEditor('Panel');
     const a = { blockId: 'block:a', name: 'Block A' };

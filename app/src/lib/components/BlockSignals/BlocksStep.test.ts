@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { createEvent, fireEvent, render, screen, within } from '@testing-library/svelte';
 import BlocksStep from './BlocksStep.svelte';
 import { fakeView, spyActions } from './editorTestSupport';
 import type { SelectedDetectedBlock } from '$lib/api/signaling';
@@ -16,6 +16,15 @@ function show(extra = {}, detected: SelectedDetectedBlock[] = []) {
 }
 
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }));
+
+/** jsdom may not build PointerEvent coordinates, so set them on the event. */
+function pointerAt(type: 'pointerDown' | 'pointerMove' | 'pointerUp', target: Element, clientY: number) {
+  const event = createEvent[type](target);
+  Object.defineProperty(event, 'clientY', { value: clientY });
+  Object.defineProperty(event, 'button', { value: 0 });
+  Object.defineProperty(event, 'pointerId', { value: 1 });
+  return fireEvent(target, event);
+}
 
 describe('BlocksStep list and row actions', () => {
   it('lists each block and its turnout in travel order, with the name field and diagram', () => {
@@ -42,6 +51,32 @@ describe('BlocksStep list and row actions', () => {
     expect(actions.moveBlock).toHaveBeenCalledWith('block:mill', 1);
     await click('Remove Mill curve from these signals');
     expect(actions.removeBlock).toHaveBeenCalledWith('block:mill');
+  });
+
+  it('selects a block moved with an arrow, with a left accent on the selected row', async () => {
+    show();
+    const millRow = () => within(screen.getByRole('table')).getByText('Mill curve').closest('tr')!;
+    expect(millRow()).not.toHaveClass('selected');
+    await click('Move Mill curve up');
+    expect(millRow()).toHaveClass('selected');
+  });
+
+  it('drags a block by its grip to a new position', async () => {
+    const actions = show();
+    const body = within(screen.getByRole('table')).getAllByRole('rowgroup')[1];
+    const blockRows = Array.from(body.querySelectorAll<HTMLElement>('[data-reorder-id]'));
+    expect(blockRows.map((row) => row.dataset.reorderId)).toEqual(['block:cedar', 'block:mill', 'block:depot']);
+    blockRows.forEach((row, i) => {
+      row.getBoundingClientRect = () => ({ top: i * 40, height: 40, bottom: i * 40 + 40, left: 0, right: 0, width: 0, x: 0, y: i * 40, toJSON: () => ({}) });
+    });
+    const grip = blockRows[0].querySelector('[title="Drag to reorder"]')!;
+
+    await pointerAt('pointerDown', grip, 20);
+    await pointerAt('pointerMove', grip, 200);
+    expect(blockRows[2]).toHaveAttribute('data-drop', 'after');
+    await pointerAt('pointerUp', grip, 200);
+    expect(actions.moveBlockTo).toHaveBeenCalledWith('block:cedar', 2);
+    expect(within(screen.getByRole('table')).getByText('Cedar Hill').closest('tr')).toHaveClass('selected');
   });
 
   it('offers to remove the signal between a block and the one above (join), but not on the first block', async () => {

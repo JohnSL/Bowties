@@ -39,6 +39,7 @@ const { syncLayoutDrafts } = await import('$lib/api/layout');
 const {
   addSignaledBlock,
   addTurnout,
+  blockSignalsEditorActions,
   cancelBlockSignalsEditor,
   placeLamp,
   chooseWiringNode,
@@ -173,6 +174,22 @@ describe('blockSignalsEditorOrchestrator', () => {
     expect(store.blocks[0].name).toBe('Cedar Hill');
   });
 
+  it('previews an arbitrary block reorder with its turnouts through editor actions', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    await addSignaledBlock(MILL);
+    await addSignaledBlock({ blockId: 'block:pine', name: 'Pine' });
+    const turnoutId = await addTurnout(CEDAR.blockId);
+
+    await blockSignalsEditorActions.moveBlockTo(CEDAR.blockId, 2);
+
+    expect(store.blocks.map((block) => block.blockId)).toEqual(['block:mill', 'block:pine', 'block:cedar']);
+    expect(previewBlockSignalsMock.mock.lastCall![0].blocks).toEqual([
+      expect.objectContaining({ blockId: 'block:mill', joinedToPrevious: false, turnouts: [] }),
+      expect.objectContaining({ blockId: 'block:pine', joinedToPrevious: false, turnouts: [] }),
+      expect.objectContaining({ blockId: 'block:cedar', joinedToPrevious: false, turnouts: [{ turnoutId, name: 'Turnout 1' }] }),
+    ]);
+  });
   it('moves a turnout within its block and on into the neighbouring block', async () => {
     startBlockSignalsEditor('Main');
     await addSignaledBlock(CEDAR);

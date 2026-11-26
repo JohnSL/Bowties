@@ -51,6 +51,7 @@ class PanelEditorOrchestrator {
 
   addBlocks(blocks: SelectedDetectedBlock[]): void { store.addBlocks(blocks); }
   moveEntry(entryId: string, direction: -1 | 1): void { store.moveEntry(entryId, direction); }
+  moveEntryTo(entryId: string, toIndex: number): void { store.moveEntryTo(entryId, toIndex); }
   setLitWhen(value: LitWhen): void { store.setLitWhen(value); }
   setEntryLitWhen(entryId: string, value: LitWhen | undefined): void { store.setEntryLitWhen(entryId, value); }
 
@@ -204,6 +205,7 @@ export const panelEditorActions = {
   addBlock: (block: SelectedDetectedBlock): void => o.addBlock(block),
   addBlocks: (blocks: SelectedDetectedBlock[]): void => o.addBlocks(blocks),
   moveEntry: (entryId: string, direction: -1 | 1): void => o.moveEntry(entryId, direction),
+  moveEntryTo: (entryId: string, toIndex: number): void => o.moveEntryTo(entryId, toIndex),
   setLitWhen: (value: LitWhen): void => o.setLitWhen(value),
   setEntryLitWhen: (entryId: string, value: LitWhen | undefined): void => o.setEntryLitWhen(entryId, value),
   removeEntry: (entryId: string): void => o.removeEntry(entryId),

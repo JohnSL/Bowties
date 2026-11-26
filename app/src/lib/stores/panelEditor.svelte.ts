@@ -6,7 +6,7 @@ import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
 import { withReleasedOwner } from '$lib/utils/releasedOwners';
 import { seatPin } from '$lib/utils/pinSeat';
-import { moveItem } from '$lib/utils/moveInList';
+import { moveItem, moveItemTo } from '$lib/utils/moveInList';
 
 export type PanelEditorStep = 'blocks' | 'wiring';
 export type PanelEditorMode = 'create' | 'edit';
@@ -151,6 +151,12 @@ class PanelEditorStore {
   moveEntry(entryId: string, direction: -1 | 1): void {
     const index = this._entries.findIndex((entry) => entry.entryId === entryId);
     const entries = moveItem(this._entries, index, direction);
+    if (entries !== this._entries) this._entries = entries;
+  }
+
+  moveEntryTo(entryId: string, toIndex: number): void {
+    const index = this._entries.findIndex((entry) => entry.entryId === entryId);
+    const entries = moveItemTo(this._entries, index, toIndex);
     if (entries !== this._entries) this._entries = entries;
   }
 

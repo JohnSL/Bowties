@@ -5,10 +5,13 @@
    * hand-thrown turnouts in travel order, with the derived track drawing.
    * The name and drawing stay put; each column below scrolls on its own.
    */
+  import { tick } from 'svelte';
   import type { SelectedDetectedBlock } from '$lib/api/signaling';
   import type { BlockSignalsEditorView } from '$lib/stores/blockSignalsEditor.svelte';
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
-  import ReorderButtons from '$lib/components/ReorderButtons.svelte';
+  import ReorderButtons, { focusMovedArrow } from '$lib/components/ReorderButtons.svelte';
+  import DragHandle from '$lib/components/DragHandle.svelte';
+  import { DragReorder } from '$lib/components/dragReorder.svelte';
   import TrackDiagram from './TrackDiagram.svelte';
   import EndChipMenu from './EndChipMenu.svelte';
   import SelectBlockPicker from './SelectBlockPicker.svelte';
@@ -35,6 +38,20 @@
   let selection = $state<TrackSelection>(null);
   let menu = $state<{ end: 'start' | 'end'; top: number; left: number } | null>(null);
   let panel = $state<HTMLElement | null>(null);
+  let trackBody = $state<HTMLElement | null>(null);
+  const drag = new DragReorder(() => trackBody, (blockId, toIndex) => {
+    selection = { kind: 'block', blockId };
+    void actions.moveBlockTo(blockId, toIndex);
+  });
+
+  /** Move a block one place, keep it selected so the change stays visible, and keep focus on the arrow. */
+  async function moveBlock(blockId: string, name: string, delta: -1 | 1): Promise<void> {
+    selection = { kind: 'block', blockId };
+    const moved = actions.moveBlock(blockId, delta);
+    await tick();
+    focusMovedArrow(trackBody?.querySelector(`[data-reorder-id="${CSS.escape(blockId)}"]`), name, delta);
+    await moved;
+  }
 
   const listDirection = $derived(view.direction);
   const both = $derived(view.movements === 'bothDirections');
@@ -315,17 +332,21 @@
           <table class="abs-table track-list">
             <colgroup><col /><col style="width:96px" /><col style="width:140px" /></colgroup>
             <thead><tr><th scope="col">Track</th><th scope="col">Observed</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-            <tbody>
+            <tbody bind:this={trackBody}>
               {#each view.blocks as block, index (block.blockId)}
                 {@const state = occupancyOf(occupancy, block.blockId)}
                 <tr
+                  class="block-row"
                   class:selected={selection?.kind === 'block' && selection.blockId === block.blockId}
+                  data-reorder-id={block.blockId}
+                  data-drop={drag.sideFor(block.blockId)}
                   onclick={(event) => {
                     if (!(event.target as Element).closest('input, label, button')) selection = { kind: 'block', blockId: block.blockId };
                   }}
                 >
                   <td>
                     <div class="row-name">
+                      <DragHandle {drag} id={block.blockId} onStart={() => (selection = { kind: 'block', blockId: block.blockId })} />
                       <svg class="row-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8 H14 M2 5 V11 M14 5 V11"></path></svg>
                       <span>
                         <strong>{block.name}</strong>
@@ -347,11 +368,10 @@
                         name={block.name}
                         canMoveUp={index > 0}
                         canMoveDown={index < view.blocks.length - 1}
-                        onMove={(delta) => actions.moveBlock(block.blockId, delta)}
+                        onMove={(delta) => void moveBlock(block.blockId, block.name, delta)}
+                        removeLabel={`Remove ${block.name} from these signals`}
+                        onRemove={() => removeBlock(block.blockId)}
                       />
-                      <button type="button" class="icon-btn" aria-label={`Remove ${block.name} from these signals`} title={`Remove ${block.name} from these signals`} onclick={() => removeBlock(block.blockId)}>
-                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"></path></svg>
-                      </button>
                       {#if index > 0}
                         <RowMenu label={`More for ${block.name}`} items={[boundaryItem(block.blockId, view.blocks[index - 1].name, block.name, block.joinedToPrevious)]} />
                       {:else}
@@ -387,15 +407,14 @@
                     <td class="muted small" title="Position input not yet connected; treated as not lined for the main">Not connected</td>
                     <td>
                       <div class="row-actions">
-                        <button type="button" class="icon-btn" aria-label={`Move ${turnout.name} up`} title={`Move ${turnout.name} up`} disabled={!view.canMoveTurnout(turnout.turnoutId, -1)} onclick={() => actions.moveTurnout(turnout.turnoutId, -1)}>
-                          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8 L8 3 L13 8 M8 3 V13"></path></svg>
-                        </button>
-                        <button type="button" class="icon-btn" aria-label={`Move ${turnout.name} down`} title={`Move ${turnout.name} down`} disabled={!view.canMoveTurnout(turnout.turnoutId, 1)} onclick={() => actions.moveTurnout(turnout.turnoutId, 1)}>
-                          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8 L8 13 L13 8 M8 3 V13"></path></svg>
-                        </button>
-                        <button type="button" class="icon-btn" aria-label={`Remove ${turnout.name} from these signals`} title={`Remove ${turnout.name} from these signals`} onclick={() => removeTurnout(turnout.turnoutId)}>
-                          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"></path></svg>
-                        </button>
+                        <ReorderButtons
+                          name={turnout.name}
+                          canMoveUp={view.canMoveTurnout(turnout.turnoutId, -1)}
+                          canMoveDown={view.canMoveTurnout(turnout.turnoutId, 1)}
+                          onMove={(delta) => actions.moveTurnout(turnout.turnoutId, delta)}
+                          removeLabel={`Remove ${turnout.name} from these signals`}
+                          onRemove={() => removeTurnout(turnout.turnoutId)}
+                        />
                         <span class="icon-spacer" aria-hidden="true"></span>
                       </div>
                     </td>
@@ -458,19 +477,18 @@
   .track-list { table-layout: fixed; }
   .track-list tbody tr { cursor: pointer; }
   .track-list tbody tr.selected { background: var(--abs-selected); }
+  .track-list tbody tr.selected > td:first-child { box-shadow: inset 3px 0 0 var(--abs-brand); }
+  .track-list tbody tr[data-drop='before'] > td { box-shadow: inset 0 3px 0 var(--abs-brand); }
+  .track-list tbody tr[data-drop='after'] > td { box-shadow: inset 0 -3px 0 var(--abs-brand); }
   .row-name { display: flex; align-items: flex-start; gap: 6px; }
   .row-name > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .turnout-row .row-name { padding-left: 26px; }
+  .turnout-row .row-name { padding-left: 46px; }
   .row-icon { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 1px; fill: none; stroke: var(--abs-muted); stroke-width: 1.6; stroke-linecap: round; }
   .row-sub { display: block; color: var(--abs-muted); font-size: 11px; }
   .row-sub.joined { color: #8a4b08; }
   .icon-spacer { width: 28px; flex: 0 0 28px; }
   .turnout-name { max-width: 240px; min-height: 26px; padding: 2px 6px; }
   .row-actions { display: flex; gap: 4px; }
-  .icon-btn { display: grid; place-items: center; width: 28px; height: 28px; padding: 4px; border: 1px solid var(--abs-border-strong); border-radius: 4px; background: #fff; color: var(--abs-text-secondary); cursor: pointer; }
-  .icon-btn:hover:not(:disabled) { background: #f5f5f5; }
-  .icon-btn:disabled { cursor: default; opacity: .4; }
-  .icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .list-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 7px; padding: 10px 15px; border-top: 1px solid var(--abs-border); }
   @media (max-width: 760px), (max-height: 640px) {
     section.panel.list-panel { overflow: visible; }

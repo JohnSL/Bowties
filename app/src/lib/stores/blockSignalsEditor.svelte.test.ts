@@ -28,6 +28,35 @@ function seed(): BlockSignalsEditSeed {
 
 const preview = (): BlockSignalsPreview => previewWith();
 
+describe('blockSignalsEditorStore block ordering', () => {
+  it('moves whole blocks to arbitrary positions and ignores invalid moves', () => {
+    store.reset();
+    store.start('Main');
+    store.addBlock({ blockId: 'a', name: 'A' });
+    store.addBlock({ blockId: 'b', name: 'B' });
+    store.addBlock({ blockId: 'c', name: 'C' });
+    const first = store.addTurnout('a');
+    const second = store.addTurnout('a', first);
+    const third = store.addTurnout('c');
+    store.setJoinedToPrevious('c', true);
+
+    store.moveBlockTo('a', 2);
+    expect(store.blocks).toEqual([
+      { blockId: 'b', name: 'B', joinedToPrevious: false, turnouts: [] },
+      { blockId: 'c', name: 'C', joinedToPrevious: true, turnouts: [{ turnoutId: third, name: 'Turnout 3' }] },
+      { blockId: 'a', name: 'A', joinedToPrevious: false, turnouts: [{ turnoutId: first, name: 'Turnout 1' }, { turnoutId: second, name: 'Turnout 2' }] },
+    ]);
+    store.moveBlockTo('a', 0);
+    expect(store.blocks.map((block) => block.blockId)).toEqual(['a', 'b', 'c']);
+    expect(store.blocks[0].turnouts.map((turnout) => turnout.turnoutId)).toEqual([first, second]);
+
+    const unchanged = store.blocks;
+    for (const [blockId, index] of [['missing', 0], ['a', -1], ['a', 3], ['a', 0.5], ['a', NaN], ['a', 0]] as const) {
+      store.moveBlockTo(blockId, index);
+      expect(store.blocks).toBe(unchanged);
+    }
+  });
+});
 describe('blockSignalsEditorStore step statuses', () => {
   beforeEach(() => store.reset());
 
