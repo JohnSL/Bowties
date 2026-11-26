@@ -17,10 +17,12 @@
     view,
     actions: intents,
     detectedBlocks,
+    blockSources = [],
   }: {
     view: PanelEditorView;
     actions: PanelEditorActions;
     detectedBlocks: PanelDetectedBlock[];
+    blockSources?: Array<{ id: string; label: string; blocks: Array<{ blockId: string; name: string }> }>;
   } = $props();
 
   const bar = $derived(view.stepBar);
@@ -69,7 +71,7 @@
 
     <div class="workspace">
       {#if view.step === 'blocks'}
-        <BlocksStep {view} actions={intents} {detectedBlocks} />
+        <BlocksStep {view} actions={intents} {detectedBlocks} {blockSources} />
       {:else}
         <WiringStep {view} actions={intents} />
       {/if}

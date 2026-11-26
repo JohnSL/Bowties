@@ -26,7 +26,7 @@ Template `PANEL`: `template_id "panel"`, display "Panel", one slot `lamps` (Cons
 
 | Field | Rule |
 |---|---|
-| `entryId` | Stable within the panel; survives reorder and re-pointing |
+| `entryId` | Stable within the panel; survives reorder |
 | `blockId` | Block reference, the same kind ABS uses (`SelectedBlock.block_id`); unique within the panel (FR-009) |
 | `lampChannelId?` | A channel in this facility's `lamps` slot; at most one entry per channel |
 | `litWhen?` | Override; absent means the panel setting |

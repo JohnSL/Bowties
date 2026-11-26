@@ -265,6 +265,35 @@ class EffectiveLayoutStore {
       }));
   }
 
+  /** Sources are snapshots of currently detected blocks in facility or detector input order. */
+  get blockSources(): Array<{ id: string; label: string; blocks: Array<{ blockId: string; name: string }> }> {
+    const detected = new Map(this.detectedBlocks.map((block) => [block.blockId, block]));
+    const sources: Array<{ id: string; label: string; blocks: Array<{ blockId: string; name: string }> }> = [];
+    for (const facility of facilitiesStore.facilities) {
+      if (!facility.blockSignals) continue;
+      const blocks = facility.blockSignals.blocks.flatMap(({ blockId }) => {
+        const block = detected.get(blockId);
+        return block ? [{ blockId, name: block.name }] : [];
+      });
+      if (blocks.length) sources.push({ id: `abs:${facility.facilityId}`, label: `${facility.name} · Automatic Block Signals`, blocks });
+    }
+    const boards = new Map<string, InformationChannel[]>();
+    for (const channel of channelsStore.channels) {
+      if (!detected.has(channel.id) || channel.binding.kind !== 'connectorInput') continue;
+      const nodeKey = channel.binding.nodeKey;
+      boards.set(nodeKey, [...(boards.get(nodeKey) ?? []), channel]);
+    }
+    for (const [nodeKey, channels] of boards) {
+      channels.sort((a, b) => {
+        if (a.binding.kind !== 'connectorInput' || b.binding.kind !== 'connectorInput') return 0;
+        return a.binding.connector.localeCompare(b.binding.connector, undefined, { numeric: true })
+          || a.binding.input - b.binding.input;
+      });
+      sources.push({ id: `board:${nodeKey}`, label: `${resolveNodeNameForKey(nodeKey)} · detector board`, blocks: channels.map((channel) => ({ blockId: channel.id, name: channel.name })) });
+    }
+    return sources;
+  }
+
   /**
    * Spec 018 / S5 (D1) — eligible Direct Lamp Control rows for the
    * given style id, grouped by node, across every node in the roster

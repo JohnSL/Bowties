@@ -245,6 +245,7 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
       view={panelEditorStore}
       actions={panelEditorActions}
       detectedBlocks={effectiveLayoutStore.detectedBlocks}
+      blockSources={effectiveLayoutStore.blockSources}
     />
   {/if}
 

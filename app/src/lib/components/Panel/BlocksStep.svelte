@@ -2,8 +2,9 @@
   /**
    * BlocksStep — page 1 of the Panel editor: the blocks on this panel, and
    * the detected blocks that can be added, grouped by detector board.
-   * Renders and emits intent only; reordering and add-all arrive in S3.
+   * Renders and emits intent only.
    */
+  import ReorderButtons from '$lib/components/ReorderButtons.svelte';
   import type { PanelEditorView, PanelDetectedBlock } from './panelEditorView';
   import type { PanelEditorActions } from '$lib/orchestration/panelEditorOrchestrator';
 
@@ -11,13 +12,17 @@
     view,
     actions,
     detectedBlocks,
+    blockSources,
   }: {
     view: PanelEditorView;
     actions: PanelEditorActions;
     detectedBlocks: PanelDetectedBlock[];
+    blockSources: Array<{ id: string; label: string; blocks: Array<{ blockId: string; name: string }> }>;
   } = $props();
 
   let search = $state('');
+  let sourceId = $state('');
+  const selectedSource = $derived(blockSources.find((source) => source.id === sourceId) ?? blockSources[0]);
 
   const OTHER_BOARD = 'Other detected blocks';
   const countText = $derived(`${view.entries.length} block${view.entries.length === 1 ? '' : 's'}`);
@@ -46,7 +51,7 @@
       {#if view.entries.length === 0}
         <div class="empty">
           <strong>No blocks on this panel yet</strong>
-          <span>Add the blocks whose lamps are on this panel. Use the list on the right to add them one at a time.</span>
+          <span>Add the blocks whose lamps are on this panel. You can add all of a signals facility’s or a detector board’s blocks at once.</span>
         </div>
       {:else}
         <ol class="list">
@@ -57,8 +62,12 @@
                 <div class="name">{entry.blockName}</div>
                 <div class="meta">{metaFor(entry.blockId)}</div>
               </div>
-              <button type="button" class="btn btn-icon" disabled title="Move up" aria-label={`Move ${entry.blockName} up`}>↑</button>
-              <button type="button" class="btn btn-icon" disabled title="Move down" aria-label={`Move ${entry.blockName} down`}>↓</button>
+              <ReorderButtons
+                name={entry.blockName}
+                canMoveUp={index > 0}
+                canMoveDown={index < view.entries.length - 1}
+                onMove={(delta) => actions.moveEntry(entry.entryId, delta)}
+              />
               <button
                 type="button"
                 class="btn btn-icon"
@@ -79,10 +88,13 @@
       <div>
         <label class="field-label" for="panel-add-all">Add all blocks from</label>
         <div class="shortcut-row">
-          <select id="panel-add-all" class="input" disabled>
-            <option>Not available yet</option>
+          <select id="panel-add-all" class="input" value={selectedSource?.id ?? ''} onchange={(event) => sourceId = event.currentTarget.value} disabled={blockSources.length === 0}>
+            {#if blockSources.length === 0}<option value="">No sources available</option>{/if}
+            {#each blockSources as source (source.id)}
+              <option value={source.id}>{source.label}</option>
+            {/each}
           </select>
-          <button type="button" class="btn" disabled>Add</button>
+          <button type="button" class="btn" disabled={!selectedSource} onclick={() => selectedSource && actions.addBlocks(selectedSource.blocks)}>Add</button>
         </div>
       </div>
       <input class="input" type="search" aria-label="Search blocks" placeholder="Search blocks" bind:value={search} />

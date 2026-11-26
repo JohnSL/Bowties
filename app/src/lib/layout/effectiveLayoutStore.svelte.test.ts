@@ -459,3 +459,66 @@ describe('effectiveLayoutStore.detectedBlocks', () => {
     ]);
   });
 });
+
+
+describe('effectiveLayoutStore.blockSources', () => {
+  it('lists detected blocks in facility record order and numeric connector and input order per board', async () => {
+    const { channelsStore } = await import('$lib/stores/channels.svelte');
+    const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
+    const otherNode = '020157000002';
+    mockNodeInfoMap.set(NODE_ID, { snip_data: { user_name: 'West detector' } });
+    mockNodeInfoMap.set(otherNode, { snip_data: { user_name: 'East detector' } });
+    mockTreesMap.set(NODE_ID, {
+      ...makeTree(NODE_ID, []),
+      connectorProfile: {
+        nodeId: NODE_ID, carrierKey: 'carrier',
+        slots: [
+          { slotId: 'J10', label: 'J10', order: 0, allowNoneInstalled: true, supportedDaughterboardIds: [], affectedPaths: [] },
+          { slotId: 'J2', label: 'J2', order: 1, allowNoneInstalled: true, supportedDaughterboardIds: [], affectedPaths: [] },
+        ],
+      },
+    });
+    channelsStore.setChannels([
+      { id: 'j10', name: 'Ten', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'J10', input: 1 } },
+      { id: 'east', name: 'East', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: otherNode, connector: 'J1', input: 1 } },
+      { id: 'j2-10', name: 'Two ten', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'J2', input: 10 } },
+      { id: 'lamp', name: 'Not a block', role: 'lamp-indicator', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'J1', input: 1 } },
+      { id: 'j2-2', name: 'Two two', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'J2', input: 2 } },
+    ]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'abs-first', templateId: 'automatic-block-signals', name: 'First line', slotBindings: {},
+        blockSignals: { blocks: [{ blockId: 'j10' }, { blockId: 'missing' }, { blockId: 'lamp' }, { blockId: 'j2-2' }] } },
+      { facilityId: 'empty', templateId: 'automatic-block-signals', name: 'Empty line', slotBindings: {},
+        blockSignals: { blocks: [{ blockId: 'missing' }, { blockId: 'lamp' }] } },
+      { facilityId: 'abs-second', templateId: 'automatic-block-signals', name: 'Second line', slotBindings: {},
+        blockSignals: { blocks: [{ blockId: 'east' }, { blockId: 'j2-10' }] } },
+    ] as never);
+
+    try {
+      expect(effectiveLayoutStore.blockSources).toEqual([
+        { id: 'abs:abs-first', label: 'First line · Automatic Block Signals', blocks: [
+          { blockId: 'j10', name: 'Ten' }, { blockId: 'j2-2', name: 'Two two' },
+        ] },
+        { id: 'abs:abs-second', label: 'Second line · Automatic Block Signals', blocks: [
+          { blockId: 'east', name: 'East' }, { blockId: 'j2-10', name: 'Two ten' },
+        ] },
+        { id: `board:${NODE_ID}`, label: 'West detector · detector board', blocks: [
+          { blockId: 'j2-2', name: 'Two two' }, { blockId: 'j2-10', name: 'Two ten' }, { blockId: 'j10', name: 'Ten' },
+        ] },
+        { id: `board:${otherNode}`, label: 'East detector · detector board', blocks: [
+          { blockId: 'east', name: 'East' },
+        ] },
+      ]);
+    } finally {
+      channelsStore.setChannels([]);
+      facilitiesStore.hydrateBaseline([]);
+      mockNodeInfoMap.clear();
+      mockTreesMap.clear();
+    }
+  });
+});

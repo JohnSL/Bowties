@@ -101,7 +101,7 @@ A modeler opens a layout that has Block Indicator facilities. Bowties converts t
 - **Pin in use by Bowties.** A pin that a signal mast, another panel or another facility uses cannot be chosen, and the grid names its owner.
 - **Pin in use outside Bowties.** A pin with Direct Lamp Control configuration that Bowties did not create is shown as used outside Bowties with its Lamp Description, and can be chosen only after the modeler releases it, as in the signals Wiring step.
 - **Pin taken from another block on the same panel.** A pin another block on this panel already uses shows that block and cannot be chosen; the modeler clears it on that block first (the same rule as signals in an Automatic Block Signals edit; decided 2026-11-26).
-- **Block lost.** If a block's detector disappears (its detector board is cleared or changed), the panel keeps the block's entry and lamp pin, marks it as no longer detected, and counts the panel as Incomplete. Nothing is reset on the board. The modeler removes the entry, or points it at another block, which keeps the lamp pin. If the same block is detected again, the entry recovers without changes.
+- **Block lost.** If a block's detector disappears (its detector board is cleared or changed), the panel keeps the block's entry and lamp pin, marks it as no longer detected, and counts the panel as Incomplete. Nothing is reset on the board. The modeler removes the entry (and adds another block if wanted). If the same block is detected again, the entry recovers without changes.
 - **Same block on two panels.** Allowed. Each panel owns its own lamp for that block.
 - **Panel with no blocks.** Next and Done are available. A saved panel with no blocks is shown as Empty on the Railroad tab.
 - **Offline.** Done and Save work offline; the board changes wait as Pending Changes and the card shows them as waiting per board, as for Automatic Block Signals.
@@ -125,7 +125,7 @@ A modeler opens a layout that has Block Indicator facilities. Bowties converts t
 - **FR-006**: The modeler MUST be able to add any detected block in the layout, one at a time, from a list grouped by detector board and searchable by name. Each entry MUST name any Automatic Block Signals facility the block belongs to.
 - **FR-007**: The modeler MUST be able to add all blocks of a chosen Automatic Block Signals facility or a chosen detector board at once. Blocks already on the panel MUST be skipped. Blocks MUST be added in that facility's travel order or that board's input order.
 - **FR-008**: Adding blocks from a signals facility or board MUST be a one-time selection. The panel MUST NOT follow later changes to that facility or board.
-- **FR-009**: A block MUST appear at most once on a panel. The modeler MUST be able to reorder and remove blocks. Removing a block discards its lamp choice. The modeler MUST also be able to point an entry at a different block, which keeps the entry's lamp pin and position.
+- **FR-009**: A block MUST appear at most once on a panel. The modeler MUST be able to reorder and remove blocks. Removing a block discards its lamp choice. To follow a different block, the modeler removes the entry and adds the other block (decided 2026-11-26: no separate re-point action).
 - **FR-010**: The panel's block order MUST be kept and MUST be the order used on the Wiring step and the Railroad tab card.
 - **FR-011**: The editor MUST NOT draw a track diagram for the panel.
 

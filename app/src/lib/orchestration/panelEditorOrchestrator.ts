@@ -1,5 +1,6 @@
 import { panelWiringFacts, type PanelWiringPin } from '$lib/api/panels';
 import type { SelectedDetectedBlock } from '$lib/api/signaling';
+import type { LitWhen } from '$lib/api/facilities';
 import { createPanelFacility, syncDraftsForComposition, updatePanelFacility } from '$lib/orchestration/facilityOrchestrator';
 import { effectiveLayoutStore } from '$lib/layout';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
@@ -31,18 +32,27 @@ class PanelEditorOrchestrator {
       facilityId,
       name: facility.name,
       litWhen: record.litWhen,
-      entries: effectiveLayoutStore.panelCardEntries(facilityId).map((e) => ({
-        entryId: e.entryId,
-        blockId: e.blockId,
-        blockName: e.blockName,
-        ...(e.lamp && e.lamp.pin !== null ? { lamp: { nodeKey: e.lamp.nodeKey, output: e.lamp.pin } } : {}),
-      })),
+      entries: effectiveLayoutStore.panelCardEntries(facilityId).map((e) => {
+        const litWhen = record.entries.find((entry) => entry.entryId === e.entryId)?.litWhen;
+        return {
+          entryId: e.entryId,
+          blockId: e.blockId,
+          blockName: e.blockName,
+          ...(litWhen ? { litWhen } : {}),
+          ...(e.lamp && e.lamp.pin !== null ? { lamp: { nodeKey: e.lamp.nodeKey, output: e.lamp.pin } } : {}),
+        };
+      }),
     });
   }
 
   addBlock(block: SelectedDetectedBlock): void {
     store.addBlock(block);
   }
+
+  addBlocks(blocks: SelectedDetectedBlock[]): void { store.addBlocks(blocks); }
+  moveEntry(entryId: string, direction: -1 | 1): void { store.moveEntry(entryId, direction); }
+  setLitWhen(value: LitWhen): void { store.setLitWhen(value); }
+  setEntryLitWhen(entryId: string, value: LitWhen | undefined): void { store.setEntryLitWhen(entryId, value); }
 
   removeEntry(entryId: string): void {
     store.removeEntry(entryId);
@@ -110,7 +120,7 @@ class PanelEditorOrchestrator {
         release: store.releases,
         record: {
           litWhen: store.litWhen,
-          entries: store.entries.map((e) => ({ entryId: e.entryId, blockId: e.blockId })),
+          entries: store.entries.map((e) => ({ entryId: e.entryId, blockId: e.blockId, ...(e.litWhen ? { litWhen: e.litWhen } : {}) })),
         },
         lamps: store.entries
           .filter((e) => e.lamp)
@@ -192,6 +202,10 @@ export const panelEditorActions = {
   startPanelEditor: (name: string): void => o.start(name),
   startPanelEdit: (facilityId: string): void => o.startEdit(facilityId),
   addBlock: (block: SelectedDetectedBlock): void => o.addBlock(block),
+  addBlocks: (blocks: SelectedDetectedBlock[]): void => o.addBlocks(blocks),
+  moveEntry: (entryId: string, direction: -1 | 1): void => o.moveEntry(entryId, direction),
+  setLitWhen: (value: LitWhen): void => o.setLitWhen(value),
+  setEntryLitWhen: (entryId: string, value: LitWhen | undefined): void => o.setEntryLitWhen(entryId, value),
   removeEntry: (entryId: string): void => o.removeEntry(entryId),
   goTo: (step: PanelEditorStep): Promise<void> => o.goTo(step),
   selectEntry: (entryId: string): void => o.selectEntry(entryId),

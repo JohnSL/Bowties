@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 3/6
+Status: 4/6
 
 ## Architecture
 
@@ -77,7 +77,7 @@ flowchart LR
 |---|---|---|
 | S1: One-board panel, end to end | Add a Panel, add blocks, wire each to any pin, Done, Save; lamps follow their blocks | Yes |
 | S2: Panel card and channel usage | One card per panel with blocks in order, live lamp state and honest status; Channels "Used by" names panels and ABS | Yes |
-| S3: Blocks step and "lit when" | Add all blocks from a signals facility or board; reorder; re-point; lit when Clear and per-block override | Yes |
+| S3: Blocks step and "lit when" | Add all blocks from a signals facility or board; reorder; lit when Clear and per-block override | Yes |
 | S4: Edit, release and remove | Rewire and remove with only dropped pins reset; release outside pins; confirmed removal | Yes |
 | S5: Migrate Block Indicators and retire them | Old layouts open as panels with a notice, lamps still working, nothing written | Yes |
 | S6: Route all layout imports through the facade | Invariant preserved: app behaves exactly as before | No (REFACTOR) |
@@ -90,7 +90,7 @@ flowchart LR
 |---|---|---|---|---|
 | S1 | One-board panel, end to end | HITL | None | done |
 | S2 | Panel card and channel usage | AFK | S1 | done |
-| S3 | Blocks step and "lit when" | AFK | S1 | sketched |
+| S3 | Blocks step and "lit when" | AFK | S1 | done |
 | S4 | Edit, release and remove | HITL | S1 | done |
 | S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | sketched |
 | S6 | Route all layout imports through the facade | REFACTOR | S5 | sketched |
@@ -188,15 +188,33 @@ flowchart LR
 
 **Intent**: Build a panel quickly from an existing signals facility or detector board, and choose when lamps light.
 **Boundary**: Components → panel editor store/orchestrator → facilityOrchestrator → compiler
-**Re-cut after S1**: the compiler already applies panel and per-entry "lit when"; S3 enables the disabled controls (Add all, ↑/↓, Lit when) in place and adds re-pointing in the store. "Add all from a signals facility" can read `detectedBlocks[].facility` plus the ABS record order.
+**Re-cut after S1**: the compiler already applies panel and per-entry "lit when"; S3 enables the disabled controls (Add all, ↑/↓, Lit when) in place. "Add all from a signals facility" can read `detectedBlocks[].facility` plus the ABS record order.
+**Re-cut 2026-11-26 (user)**: re-pointing an entry is dropped (80/20: remove and re-add covers it; spec FR-009 updated). The per-block "lit when" override shows on the Wiring entry only, not on the Railroad card.
 **Blocked by**: S1
-**Status**: sketched
+**Status**: done
 
 **Acceptance criteria**:
 - [ ] "Add all from" a signals facility adds its blocks in travel order; from a detector board, in input order. Blocks already on the panel are skipped. Later changes to that facility or board don't change the panel.
 - [ ] Blocks can be reordered and removed. Wiring and the card follow the new order.
-- [ ] An entry can be pointed at a different block, keeping its pin and position.
 - [ ] Panel "lit when Clear" lights lamps on clear. A per-block override shows on its entry and wins over the panel setting.
+
+**UI contract**: [mockups.html](mockups.html) `#blocks` ("Add all blocks from" select + Add, ↑/↓/× per entry) and `#wiring` (toolbar "Lamps are lit when the block is" Occupied | Clear; per-block "Lit when" Panel default (x) | Occupied | Clear; entry meta "· lit when clear" when overridden). The S1 disabled controls are enabled in place. Source labels: "<facility> · Automatic Block Signals", "<board> · detector board".
+
+**Complexity**: medium
+**User stories**: US1 (scenarios 7, 8), FR-007, FR-008, FR-009, FR-010, FR-017
+
+**Placement**: block sources for "Add all" are a derivation in `effectiveLayoutStore` (ADR-0004 single owner, next to `detectedBlocks`): ABS facilities in record travel order, detector boards in connector/input order, detected blocks only. Editor input (add many, move, lit when) is in `panelEditorStore`; the orchestrator forwards intents and sends per-entry `litWhen` on Done and reads it back on Edit. No backend change: the compiler already applies panel and per-entry lit when.
+
+**Tasks**:
+- [x] S3-T1: Integration test (`RailroadPanel.panel.integration.test.ts`): Add all from an ABS facility adds its blocks in travel order and skips one already on the panel; ↓ on the first entry swaps order and Wiring follows; panel lit when Clear plus one entry overridden to Occupied → Done sends a record with `litWhen: 'clear'` and that entry's `litWhen: 'occupied'`; Edit reopens with both settings shown.
+- [x] S3-T2: `effectiveLayoutStore.blockSources` (ABS facilities in record order; detector boards by node in connector then input order; only detected blocks; empty sources omitted). Store tests.
+- [x] S3-T3: `panelEditorStore`: `addBlocks` (skips duplicates, keeps order), `moveEntry(entryId, -1|1)`, `setLitWhen`, `setEntryLitWhen(entryId, LitWhen | undefined)`; `PanelEditorEntry.litWhen?`; `startEdit` keeps entry overrides. Extract shared pure `utils/moveInList.ts` neighbor swap and use it in ABS and Panel stores; utility and store tests.
+- [x] S3-T4: `panelEditorOrchestrator`: intents for the above; Done sends entry `litWhen`; `startEdit` seeds overrides from the saved record. Orchestrator tests.
+- [x] S3-T5: Components: `BlocksStep` "Add all blocks from" (sources passed from `FacilitiesSection` via `PanelEditor`) and ↑/↓ enabled (disabled at the ends); `WiringStep` panel and per-block lit when segmented controls enabled, entry meta shows "· lit when <x>" for an override. Extract shared SVG reorder controls for ABS and Panel block rows with matching accessible labels and end disabling. Component tests.
+- [x] S3-T6: Docs (aiwiki owners for `blockSources`, panel editor store API) and validation: vitest, svelte-check (baseline 113/2). Running-app check against `#blocks` and `#wiring`; bench: a Clear lamp lights when its block is clear.
+
+**S3 validation (2026-11-26)**: Full frontend Vitest: 1,918 passed, 0 failed (156 files), re-run by the caller. `npm run check`: 113 errors / 2 warnings (baseline unchanged). Changed-file set matches the S3 surface (plus the user-requested shared `components/ReorderButtons.svelte` and `utils/moveInList.ts`; ABS block rows now use them). Known cosmetic difference: the Panel × is still a text button next to the SVG arrows. PENDING (user): running-app comparison against `#blocks` and `#wiring`, and bench check that a Clear lamp lights when its block is clear; S3 stays `tasked` until recorded.
+- 2026-11-26 user: bench tests pass. S3 closed. Follow-up UX changes from the updated mockup `#blocks` (swapped panes, widths, row styling, drag reorder, highlight after move, selected-row accent) are done after S3.
 
 ### S4: Edit, release and remove [HITL]
 
@@ -281,4 +299,4 @@ flowchart LR
 - [ ] A guard test fails if a route or component imports an edit-layer store directly.
 - [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
 
-<!-- Session: 2026-11-26 — S1, S2, S4 done. Next: S3 (AFK; re-pointing has no mockup UI, ask the user) or S5 (HITL). -->
+<!-- Session: 2026-11-26 — S1, S2, S3, S4 done. Next: S5 (HITL). -->

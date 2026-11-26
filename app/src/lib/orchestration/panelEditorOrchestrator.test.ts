@@ -50,6 +50,31 @@ async function openOnWiring(owners: Record<number, PinOwner> = {}) {
   return { a, b };
 }
 
+describe('panelEditorOrchestrator direct editing intents', () => {
+  beforeEach(() => store.reset());
+
+  it('adds unique blocks, moves them within bounds, and sets or clears lit-when overrides', () => {
+    actions.startPanelEditor('Panel');
+    const a = { blockId: 'block:a', name: 'Block A' };
+    const b = { blockId: 'block:b', name: 'Block B' };
+    actions.addBlock(a);
+    actions.addBlocks([a, b, b]);
+    const [first, second] = store.entries;
+    expect(store.entries.map((entry) => entry.blockId)).toEqual(['block:a', 'block:b']);
+    actions.moveEntry(first.entryId, -1);
+    actions.moveEntry(second.entryId, 1);
+    expect(store.entries.map((entry) => entry.entryId)).toEqual([first.entryId, second.entryId]);
+    actions.moveEntry(second.entryId, -1);
+    expect(store.entries.map((entry) => entry.entryId)).toEqual([second.entryId, first.entryId]);
+    actions.setLitWhen('clear');
+    actions.setEntryLitWhen(first.entryId, 'occupied');
+    expect(store.litWhen).toBe('clear');
+    expect(store.entries.find((entry) => entry.entryId === first.entryId)?.litWhen).toBe('occupied');
+    actions.setEntryLitWhen(first.entryId, undefined);
+    expect(store.entries.find((entry) => entry.entryId === first.entryId)).not.toHaveProperty('litWhen');
+  });
+});
+
 describe('panelEditorOrchestrator wiring step', () => {
   beforeEach(() => {
     store.reset();
@@ -174,6 +199,21 @@ describe('panelEditorOrchestrator finish and cancel', () => {
     expect(store.open).toBe(false);
   });
 
+  it('Done on create sends the panel setting and only explicit entry overrides', async () => {
+    const { a, b } = await openOnWiring();
+    actions.setLitWhen('clear');
+    actions.setEntryLitWhen(a.entryId, 'occupied');
+    createPanelFacilityMock.mockResolvedValue({ ok: true });
+    await actions.finish();
+    expect(createPanelFacilityMock.mock.calls[0][0].record).toEqual({
+      litWhen: 'clear',
+      entries: [
+        { entryId: a.entryId, blockId: 'block:a', litWhen: 'occupied' },
+        { entryId: b.entryId, blockId: 'block:b' },
+      ],
+    });
+  });
+
   it('compose issues keep the editor open with the error text', async () => {
     await openOnWiring();
     createPanelFacilityMock.mockResolvedValue({
@@ -269,6 +309,33 @@ describe('panelEditorOrchestrator edit', () => {
     expect(store.entries.map((e) => [e.entryId, e.blockName])).toEqual([['e1', 'Block A'], ['e2', 'Block B']]);
     expect(store.lampFor('e1')).toEqual({ nodeKey: NODE, output: 9 });
     expect(store.lampFor('e2')).toBeNull();
+  });
+
+  it('matches saved entry overrides by entryId even when effective entries are reordered', async () => {
+    facilitiesStore.hydrateBaseline([{
+      facilityId: SAVED, templateId: 'panel', name: 'Saved panel', slotBindings: {},
+      panel: { litWhen: 'clear', entries: [
+        { entryId: 'e1', blockId: 'block:a', litWhen: 'occupied' },
+        { entryId: 'e2', blockId: 'block:b' },
+      ] },
+    }]);
+    panelCardEntriesMock.mockReturnValue([
+      { entryId: 'e2', blockId: 'block:b', blockName: 'Block B', blockMissing: false, lamp: null },
+      { entryId: 'e1', blockId: 'block:a', blockName: 'Block A', blockMissing: false, lamp: null },
+    ]);
+    actions.startPanelEdit(SAVED);
+    expect(store.entries.map((entry) => entry.entryId)).toEqual(['e2', 'e1']);
+    expect(store.entries[0]).not.toHaveProperty('litWhen');
+    expect(store.entries[1].litWhen).toBe('occupied');
+    updatePanelFacilityMock.mockResolvedValue({ ok: true });
+    await actions.finish();
+    expect(updatePanelFacilityMock.mock.calls[0][0].record).toEqual({
+      litWhen: 'clear', entries: [
+        { entryId: 'e2', blockId: 'block:b' },
+        { entryId: 'e1', blockId: 'block:a', litWhen: 'occupied' },
+      ],
+    });
+    expect(createPanelFacilityMock).not.toHaveBeenCalled();
   });
 
   it('Done in edit mode updates the facility with the same id and never creates', async () => {

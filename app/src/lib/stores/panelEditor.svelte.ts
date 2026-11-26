@@ -6,6 +6,7 @@ import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
 import { withReleasedOwner } from '$lib/utils/releasedOwners';
 import { seatPin } from '$lib/utils/pinSeat';
+import { moveItem } from '$lib/utils/moveInList';
 
 export type PanelEditorStep = 'blocks' | 'wiring';
 export type PanelEditorMode = 'create' | 'edit';
@@ -20,6 +21,7 @@ export interface PanelEditorEntry {
   blockId: string;
   blockName: string;
   lamp?: PanelLamp;
+  litWhen?: LitWhen;
 }
 
 export interface PanelEditorMessage {
@@ -81,7 +83,6 @@ class PanelEditorStore {
   get name(): string { return this._name; }
   get step(): PanelEditorStep { return this._step; }
   get mode(): PanelEditorMode { return this._mode; }
-  /** Not editable yet: the record's default for a new panel, the saved value in edit. */
   get litWhen(): LitWhen { return this._litWhen; }
   get entries(): PanelEditorEntry[] { return this._entries; }
   get selectedEntryId(): string | undefined { return this._selectedEntryId; }
@@ -141,6 +142,27 @@ class PanelEditorStore {
       ...this._entries,
       { entryId: generateUuidV4(), blockId: block.blockId, blockName: block.name },
     ];
+  }
+
+  addBlocks(blocks: SelectedDetectedBlock[]): void {
+    for (const block of blocks) this.addBlock(block);
+  }
+
+  moveEntry(entryId: string, direction: -1 | 1): void {
+    const index = this._entries.findIndex((entry) => entry.entryId === entryId);
+    const entries = moveItem(this._entries, index, direction);
+    if (entries !== this._entries) this._entries = entries;
+  }
+
+  setLitWhen(value: LitWhen): void { this._litWhen = value; this._finishError = null; }
+
+  setEntryLitWhen(entryId: string, value: LitWhen | undefined): void {
+    this._entries = this._entries.map((entry) => {
+      if (entry.entryId !== entryId) return entry;
+      const { litWhen: _, ...rest } = entry;
+      return value ? { ...rest, litWhen: value } : rest;
+    });
+    this._finishError = null;
   }
 
   removeEntry(entryId: string): void {

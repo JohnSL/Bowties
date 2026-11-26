@@ -8,6 +8,7 @@
   import type { SelectedDetectedBlock } from '$lib/api/signaling';
   import type { BlockSignalsEditorView } from '$lib/stores/blockSignalsEditor.svelte';
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
+  import ReorderButtons from '$lib/components/ReorderButtons.svelte';
   import TrackDiagram from './TrackDiagram.svelte';
   import EndChipMenu from './EndChipMenu.svelte';
   import SelectBlockPicker from './SelectBlockPicker.svelte';
@@ -342,12 +343,12 @@
                   </td>
                   <td>
                     <div class="row-actions">
-                      <button type="button" class="icon-btn" aria-label={`Move ${block.name} up`} title={`Move ${block.name} up`} disabled={index === 0} onclick={() => actions.moveBlock(block.blockId, -1)}>
-                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8 L8 3 L13 8 M8 3 V13"></path></svg>
-                      </button>
-                      <button type="button" class="icon-btn" aria-label={`Move ${block.name} down`} title={`Move ${block.name} down`} disabled={index === view.blocks.length - 1} onclick={() => actions.moveBlock(block.blockId, 1)}>
-                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8 L8 13 L13 8 M8 3 V13"></path></svg>
-                      </button>
+                      <ReorderButtons
+                        name={block.name}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < view.blocks.length - 1}
+                        onMove={(delta) => actions.moveBlock(block.blockId, delta)}
+                      />
                       <button type="button" class="icon-btn" aria-label={`Remove ${block.name} from these signals`} title={`Remove ${block.name} from these signals`} onclick={() => removeBlock(block.blockId)}>
                         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"></path></svg>
                       </button>

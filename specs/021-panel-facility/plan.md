@@ -116,7 +116,7 @@ See [research.md](research.md). Decisions:
 ### Flow
 
 1. **Add facility → Panel** (name required) opens `PanelEditor` on Blocks with an empty list.
-2. **Blocks** edits the editor store only: add one, add all from an ABS facility (travel order) or detector board (input order), reorder, remove, re-point an entry.
+2. **Blocks** edits the editor store only: add one, add all from an ABS facility (travel order) or detector board (input order), reorder, remove.
 3. **Wiring** asks the backend for wiring facts once per board shown: pins with labels and owners (free, this panel, Bowties elsewhere, outside Bowties with Lamp Description). Pin clicks follow the ABS `seatLamp` rule: a free pin seats, the same pin clears, another entry's pin moves with a message, an outside pin needs Release.
 4. **Done** calls `facilityOrchestrator.createPanelFacility` / `updatePanelFacility`:
    - sync drafts, call `compose_panel` with the record and releases,
@@ -139,7 +139,7 @@ Order of deliverables; `/design` and `/slices` set the slices.
 
 1. **One-board panel end to end (US1)**: template, record, compiler, wiring facts, editor, Done, Save, bench check with non-sequential pins.
 2. **Railroad card (US2)**: one card per panel, entries in order, derived status, live lamp state, waiting changes per board.
-3. **Edit and remove (US3)**: rewire, remove entry, re-point entry, remove panel with confirmation; only claimed pins reset.
+3. **Edit and remove (US3)**: rewire, remove entry, remove panel with confirmation; only claimed pins reset.
 4. **Migration (US4)**: load-time conversion, notice, marked changed, Add facility no longer offers Block Indicator, retire dead Block Indicator code.
 5. **Docs**: glossary (Panel; the "at most one facility slot" rule), `docs/user/using.md`, ADR-0012/0013 dated extensions, aiwiki owners/flows/seams, backlog.
 

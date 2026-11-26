@@ -20,9 +20,14 @@ const DETECTED = [
   { blockId: 'block:c', name: 'Helix Lower', board: 'Helix BOD' },
 ];
 
-function openEditor() {
+const SOURCES = [
+  { id: 'facility', label: 'Signals facility', blocks: [DETECTED[0], DETECTED[1]] },
+  { id: 'board', label: 'Helix BOD', blocks: [DETECTED[1], DETECTED[2]] },
+];
+
+function openEditor(blockSources = [] as typeof SOURCES) {
   panelEditorActions.startPanelEditor('Fascia');
-  render(PanelEditor, { props: { view: panelEditorStore, actions: panelEditorActions, detectedBlocks: DETECTED } });
+  render(PanelEditor, { props: { view: panelEditorStore, actions: panelEditorActions, detectedBlocks: DETECTED, blockSources } });
 }
 
 const detected = () => screen.getByRole('region', { name: 'Detected blocks' });
@@ -61,13 +66,51 @@ describe('Panel editor Blocks step', () => {
     expect(screen.getByRole('button', { name: 'Add Main 1' })).toBeInTheDocument();
   });
 
-  it('keeps move and add-all controls rendered but disabled in this release', async () => {
+  it('disables move and add-all controls when no sources or other entries exist', async () => {
     openEditor();
     await fireEvent.click(screen.getByRole('button', { name: 'Add Main 1' }));
     expect(screen.getByRole('button', { name: 'Move Main 1 up' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Main 1 down' })).toBeDisabled();
     expect(screen.getByLabelText('Add all blocks from')).toBeDisabled();
     expect(within(detected()).getByRole('button', { name: 'Add' })).toBeDisabled();
+  });
+
+  it('defaults to the first source, switches to a board, and adds without duplicates', async () => {
+    openEditor(SOURCES);
+    const source = screen.getByLabelText('Add all blocks from');
+    expect(source).toHaveValue('facility');
+    await fireEvent.click(within(detected()).getByRole('button', { name: 'Add' }));
+    expect(panelEditorStore.entries.map((entry) => entry.blockId)).toEqual(['block:a', 'block:b']);
+    await fireEvent.change(source, { target: { value: 'board' } });
+    expect(source).toHaveValue('board');
+    await fireEvent.click(within(detected()).getByRole('button', { name: 'Add' }));
+    expect(panelEditorStore.entries.map((entry) => entry.blockId)).toEqual(['block:a', 'block:b', 'block:c']);
+    expect(within(onPanel()).getByText('3 blocks')).toBeInTheDocument();
+  });
+
+  it('reorders blocks with arrows and disables each boundary', async () => {
+    openEditor(SOURCES);
+    await fireEvent.click(within(detected()).getByRole('button', { name: 'Add' }));
+    expect(screen.getByRole('button', { name: 'Move Main 1 up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Eagle Creek Siding down' })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Move Eagle Creek Siding up' }));
+    expect(panelEditorStore.entries.map((entry) => entry.blockId)).toEqual(['block:b', 'block:a']);
+    expect(screen.getByRole('button', { name: 'Move Eagle Creek Siding up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Main 1 down' })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Move Eagle Creek Siding down' }));
+    expect(panelEditorStore.entries.map((entry) => entry.blockId)).toEqual(['block:a', 'block:b']);
+  });
+
+  it('navigates back to blocks retaining edits, then cancel discards them', async () => {
+    openEditor();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Main 1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Next: Wiring' }));
+    expect(panelEditorStore.step).toBe('wiring');
+    await fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(within(onPanel()).getByText('Main 1')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(panelEditorStore.open).toBe(false);
+    expect(panelEditorStore.entries).toHaveLength(0);
   });
 
   it('Next goes to Wiring, also with no blocks', async () => {

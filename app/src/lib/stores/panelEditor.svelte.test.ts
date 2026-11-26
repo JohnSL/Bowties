@@ -25,6 +25,53 @@ describe('panelEditorStore blocks step', () => {
     expect(store.entries[0].entryId).not.toBe(store.entries[1].entryId);
   });
 
+  it.each(['panel', 'entry'] as const)('clears a finish error when %s lit-when changes', (target) => {
+    store.start('P');
+    store.addBlock(A);
+    store.setFinishError('Cannot finish');
+    if (target === 'panel') store.setLitWhen('clear');
+    else store.setEntryLitWhen(store.entries[0].entryId, 'clear');
+    expect(store.finishError).toBeNull();
+  });
+
+  it('addBlocks keeps first-seen order and snapshots block names while skipping duplicates', () => {
+    store.start('P');
+    const first = { ...A };
+    store.addBlocks([first, B, { ...A, name: 'Duplicate' }]);
+    first.name = 'Changed later';
+    store.addBlocks([B]);
+    expect(store.entries.map(({ blockId, blockName }) => [blockId, blockName])).toEqual([
+      ['block:a', 'Block A'], ['block:b', 'Block B'],
+    ]);
+  });
+
+  it('moves whole entries and leaves them unchanged at bounds or for an unknown id', () => {
+    store.start('P');
+    store.addBlocks([A, B]);
+    const [a, b] = store.entries;
+    store.seatLamp(a.entryId, 'node1', 3);
+    store.setEntryLitWhen(a.entryId, 'clear');
+    store.moveEntry(a.entryId, -1);
+    store.moveEntry(b.entryId, 1);
+    store.moveEntry('missing', 1);
+    expect(store.entries.map((e) => e.entryId)).toEqual([a.entryId, b.entryId]);
+    store.moveEntry(a.entryId, 1);
+    expect(store.entries.map((e) => e.entryId)).toEqual([b.entryId, a.entryId]);
+    expect(store.entries[1]).toMatchObject({ blockId: A.blockId, blockName: A.name, lamp: { nodeKey: 'node1', output: 3 }, litWhen: 'clear' });
+    store.moveEntry(a.entryId, -1);
+    expect(store.entries.map((e) => e.entryId)).toEqual([a.entryId, b.entryId]);
+  });
+
+  it('removes an entry override when restoring the panel default', () => {
+    store.start('P');
+    store.addBlock(A);
+    const id = store.entries[0].entryId;
+    store.setEntryLitWhen(id, 'clear');
+    store.setEntryLitWhen(id, undefined);
+    expect(store.entries[0]).not.toHaveProperty('litWhen');
+    expect(store.litWhen).toBe('occupied');
+  });
+
   it('removeEntry drops the entry and its lamp', () => {
     store.start('P');
     store.addBlock(A);
@@ -100,6 +147,15 @@ describe('panelEditorStore edit mode', () => {
     expect(store.lampFor('e1')).toEqual({ nodeKey: 'node1', output: 9 });
     expect(store.lampFor('e2')).toBeNull();
     expect(store.entries.map((e) => e.entryId)).toEqual(['e1', 'e2']);
+  });
+
+  it('copies edit overrides and lamps without retaining the seed entry', () => {
+    const entry = { entryId: 'e', blockId: 'b', blockName: 'B', litWhen: 'clear' as const, lamp: { nodeKey: 'node1', output: 3 } };
+    store.startEdit({ facilityId: 'f', name: 'n', litWhen: 'occupied', entries: [entry] });
+    entry.lamp.output = 7;
+    expect(store.entries[0]).toMatchObject({ litWhen: 'clear', lamp: { nodeKey: 'node1', output: 3 } });
+    store.setEntryLitWhen('e', 'occupied');
+    expect(entry.litWhen).toBe('clear');
   });
 
   it('start opens in create mode', () => {

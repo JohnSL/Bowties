@@ -436,3 +436,74 @@ describe('RailroadPanel Panel edit (Spec 021 / S4)', () => {
     expect(cardText()).toBe(before);
   }, 15000);
 });
+
+
+describe('RailroadPanel Blocks and lit when (Spec 021 / S3)', () => {
+  beforeEach(() => {
+    channelsStore.reset();
+    facilitiesStore.reset();
+    behaviorTemplatesStore.reset();
+    panelEditorStore.reset();
+    configChangesStore.clearAllDrafts();
+    eventStateStore.clear();
+    invoke.mockReset();
+    rosterSpy().mockReturnValue([lampBoardEntry(BOARD_NODE)]);
+  });
+
+  it('adds an ABS snapshot without duplicates, reorders it, and saves and reopens lit-when settings', async () => {
+    seedSavedBlockSignals();
+    const abs = facilitiesStore.facilities[0];
+    facilitiesStore.hydrateBaseline([{
+      ...abs,
+      name: 'Mainline Eastbound',
+      blockSignals: {
+        ...abs.blockSignals!,
+        blocks: [blocks[2], blocks[0], blocks[1]].map((block) => ({
+          blockId: block.id, name: block.name, joinedToPrevious: false, turnouts: [],
+        })),
+      },
+    }]);
+    const editor = await openPanelEditor(invoke, panelIpc(wiringFacts()));
+    await addBlocks(editor, ['Mill curve']);
+    const source = within(editor).getByLabelText('Add all blocks from');
+    expect(source).toBeEnabled();
+    await fireEvent.change(source, { target: { value: within(source).getByRole('option', { name: 'Mainline Eastbound · Automatic Block Signals' }).getAttribute('value') } });
+    await fireEvent.click(within(within(editor).getByRole('region', { name: 'Detected blocks' })).getByRole('button', { name: 'Add' }));
+    const onPanel = within(editor).getByRole('region', { name: 'On this panel' });
+    expect(within(onPanel).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Mill curve'), expect.stringContaining('River bridge'), expect.stringContaining('Cedar Hill'),
+    ]);
+    await fireEvent.click(within(onPanel).getByRole('button', { name: 'Move Mill curve down' }));
+    expect(within(onPanel).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('River bridge'), expect.stringContaining('Mill curve'), expect.stringContaining('Cedar Hill'),
+    ]);
+    await goToWiring(editor);
+    const list = within(editor).getByRole('listbox', { name: 'Panel blocks' });
+    expect(within(list).getAllByRole('option').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('River bridge'), expect.stringContaining('Mill curve'), expect.stringContaining('Cedar Hill'),
+    ]);
+    await fireEvent.click(within(within(editor).getByRole('radiogroup', { name: 'Lamps are lit when the block is' })).getByRole('radio', { name: 'Clear' }));
+    await fireEvent.click(within(list).getByRole('option', { name: /Mill curve/ }));
+    await fireEvent.click(within(within(editor).getByRole('radiogroup', { name: 'Lit when' })).getByRole('radio', { name: 'Occupied' }));
+    expect(within(list).getByRole('option', { name: /Mill curve/ })).toHaveTextContent('lit when occupied');
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Eagle Creek fascia' })).not.toBeInTheDocument());
+    const request = invoke.mock.calls.filter(([command]) => command === 'compose_panel').at(-1)?.[1] as { request: { record: { litWhen: string; entries: Array<{ blockId: string; litWhen?: string }> } } };
+    expect(request.request.record).toMatchObject({ litWhen: 'clear', entries: [
+      { blockId: 'block:river' }, { blockId: 'block:mill', litWhen: 'occupied' }, { blockId: 'block:cedar' },
+    ] });
+    const card = await screen.findByTestId('panel-card');
+    expect(within(card).getAllByTestId('panel-tile').map((tile) => tile.textContent)).toEqual([
+      expect.stringContaining('River bridge'), expect.stringContaining('Mill curve'), expect.stringContaining('Cedar Hill'),
+    ]);
+    expect(card).not.toHaveTextContent('lit when');
+    await fireEvent.click(within(card).getByRole('button', { name: 'Edit facility' }));
+    const reopened = await screen.findByRole('dialog', { name: 'Eagle Creek fascia' });
+    await goToWiring(reopened);
+    expect(within(within(reopened).getByRole('radiogroup', { name: 'Lamps are lit when the block is' })).getByRole('radio', { name: 'Clear' })).toBeChecked();
+    await fireEvent.click(within(within(reopened).getByRole('listbox', { name: 'Panel blocks' })).getByRole('option', { name: /Mill curve/ }));
+    expect(within(within(reopened).getByRole('radiogroup', { name: 'Lit when' })).getByRole('radio', { name: 'Occupied' })).toBeChecked();
+    await fireEvent.click(within(reopened).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Eagle Creek fascia' })).not.toBeInTheDocument();
+  }, 15000);
+});

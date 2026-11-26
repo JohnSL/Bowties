@@ -64,8 +64,8 @@
 <div class="toolbar">
   <span class="field-label" id="lit-when-label">Lamps are lit when the block is</span>
   <div class="segmented" role="radiogroup" aria-labelledby="lit-when-label">
-    <label class="segment selected"><input type="radio" name="lit-when" checked disabled />Occupied</label>
-    <label class="segment"><input type="radio" name="lit-when" disabled />Clear</label>
+    <label class="segment" class:selected={view.litWhen === 'occupied'}><input type="radio" name="lit-when" checked={view.litWhen === 'occupied'} onchange={() => actions.setLitWhen('occupied')} />Occupied</label>
+    <label class="segment" class:selected={view.litWhen === 'clear'}><input type="radio" name="lit-when" checked={view.litWhen === 'clear'} onchange={() => actions.setLitWhen('clear')} />Clear</label>
   </div>
 </div>
 
@@ -99,7 +99,7 @@
               <div class="grow">
                 <div class="name">{entry.blockName}</div>
                 <div class="meta">
-                  {entry.lamp ? `${boardName(entry.lamp.nodeKey)} · ${pinLabel(entry.lamp.nodeKey, entry.lamp.output)}` : 'No lamp yet'}
+                  {entry.lamp ? `${boardName(entry.lamp.nodeKey)} · ${pinLabel(entry.lamp.nodeKey, entry.lamp.output)}` : 'No lamp yet'}{entry.litWhen ? ` · lit when ${entry.litWhen}` : ''}
                 </div>
               </div>
               {#if entry.lamp}
@@ -156,9 +156,9 @@
         <div>
           <div class="field-label">Lit when</div>
           <div class="segmented" role="radiogroup" aria-label="Lit when">
-            <label class="segment selected"><input type="radio" name="lit-when-block" checked disabled />Panel default (occupied)</label>
-            <label class="segment"><input type="radio" name="lit-when-block" disabled />Occupied</label>
-            <label class="segment"><input type="radio" name="lit-when-block" disabled />Clear</label>
+            <label class="segment" class:selected={!selected.litWhen}><input type="radio" name="lit-when-block" checked={!selected.litWhen} onchange={() => actions.setEntryLitWhen(selected.entryId, undefined)} />Panel default ({view.litWhen})</label>
+            <label class="segment" class:selected={selected.litWhen === 'occupied'}><input type="radio" name="lit-when-block" checked={selected.litWhen === 'occupied'} onchange={() => actions.setEntryLitWhen(selected.entryId, 'occupied')} />Occupied</label>
+            <label class="segment" class:selected={selected.litWhen === 'clear'}><input type="radio" name="lit-when-block" checked={selected.litWhen === 'clear'} onchange={() => actions.setEntryLitWhen(selected.entryId, 'clear')} />Clear</label>
           </div>
         </div>
       {/if}

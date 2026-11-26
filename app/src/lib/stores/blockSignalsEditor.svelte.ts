@@ -20,6 +20,7 @@ import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { withReleasedOwner } from '$lib/utils/releasedOwners';
 import { generateUuidV4 } from '$lib/utils/uuid';
 import { seatPin } from '$lib/utils/pinSeat';
+import { moveItem } from '$lib/utils/moveInList';
 import { previewRequestFromRecord } from '$lib/utils/blockSignalsPreviewRequest';
 
 export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring';
@@ -421,11 +422,8 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   /** Move a block, with its turnouts, one place up (-1) or down (+1). */
   moveBlock(blockId: string, delta: -1 | 1): void {
     const index = this._blocks.findIndex((block) => block.blockId === blockId);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= this._blocks.length) return;
-    const blocks = [...this._blocks];
-    [blocks[index], blocks[target]] = [blocks[target], blocks[index]];
-    this._blocks = blocks;
+    const blocks = moveItem(this._blocks, index, delta);
+    if (blocks !== this._blocks) this._blocks = blocks;
   }
 
   setJoinedToPrevious(blockId: string, joined: boolean): void {

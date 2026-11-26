@@ -145,11 +145,32 @@ describe('Panel editor Wiring step', () => {
     expect(await screen.findByText('Board has no row 3')).toBeInTheDocument();
   });
 
-  it('keeps Lit-when controls disabled with Occupied selected, and Done calls finish', async () => {
+  it('changes the panel default and per-entry overrides, then restores Panel default', async () => {
+    await openOnWiring();
+    const panelSetting = screen.getByRole('radiogroup', { name: 'Lamps are lit when the block is' });
+    expect(within(panelSetting).getByRole('radio', { name: 'Occupied' })).toBeChecked();
+    await fireEvent.click(within(panelSetting).getByRole('radio', { name: 'Clear' }));
+    expect(panelEditorStore.litWhen).toBe('clear');
+    await fireEvent.click(row('Main 1'));
+    const entrySetting = screen.getByRole('radiogroup', { name: 'Lit when' });
+    expect(within(entrySetting).getByRole('radio', { name: 'Panel default (clear)' })).toBeChecked();
+    await fireEvent.click(within(entrySetting).getByRole('radio', { name: 'Occupied' }));
+    expect(within(row('Main 1')).getByText('No lamp yet · lit when occupied')).toBeInTheDocument();
+    expect(within(row('Main 2')).getByText('No lamp yet')).toBeInTheDocument();
+    await fireEvent.click(within(panelSetting).getByRole('radio', { name: 'Occupied' }));
+    expect(within(entrySetting).getByRole('radio', { name: 'Panel default (occupied)' })).toBeInTheDocument();
+    expect(within(entrySetting).getByRole('radio', { name: 'Occupied' })).toBeChecked();
+    await fireEvent.click(within(entrySetting).getByRole('radio', { name: 'Panel default (occupied)' }));
+    expect(within(entrySetting).getByRole('radio', { name: 'Panel default (occupied)' })).toBeChecked();
+    expect(within(row('Main 1')).getByText('No lamp yet')).toBeInTheDocument();
+    expect(panelEditorStore.entries[0]).not.toHaveProperty('litWhen');
+  });
+
+  it('defaults Lit-when to Occupied, allows Clear, and Done calls finish', async () => {
     createPanelFacilityMock.mockResolvedValue({ ok: false, error: new Error('Could not save') });
     await openOnWiring();
     expect(screen.getByRole('radio', { name: 'Occupied' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'Clear' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'Clear' })).toBeEnabled();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(createPanelFacilityMock).toHaveBeenCalledTimes(1);
