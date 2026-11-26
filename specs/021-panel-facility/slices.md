@@ -1,0 +1,224 @@
+# Slices: Panel Facility
+
+Branch: 021-panel-facility
+Generated: 2026-11-25
+Status: 0/6 slices complete
+
+## Architecture
+
+### Before
+
+```mermaid
+flowchart LR
+  subgraph UI
+    FS[FacilitySlot pickers] --> FO[facilityOrchestrator]
+    ABSE[ABS editor + WiringStep] --> FO
+    Card[FacilityCard] --> ELS[effectiveLayoutStore]
+  end
+  FO -- Block Indicator --> FB[compose_facility_bowties] --> FBC[core facility_bowties]
+  FO -- ABS --> SC[compose_block_signals] --> SIG[core signaling compiler + outputs/slots]
+  FO --> CE[configEditor drafts] --> Save[Save / Sync Panel]
+  Open[open_layout_directory: normalize refs] -.-> LS[LayoutState]
+  List[list_facilities: raw read] -.-> FStore[facilities store]
+  ELS -- usage from slots only --> Chan[Channels panel]
+```
+
+### After
+
+```mermaid
+flowchart LR
+  subgraph UI
+    PE[PanelEditor: Blocks, Wiring] --> PEO[panelEditorOrchestrator] --> FO[facilityOrchestrator]
+    ABSE[ABS editor] --> FO
+    PinRule[shared pin-seat rule + pin grid] --- PE
+    PinRule --- ABSE
+    PC[PanelCard] --> ELS[effectiveLayoutStore]
+  end
+  PEO --> PWF[panel_wiring_facts] --> OUT[core signaling outputs/slots]
+  FO -- Panel --> CP[compose_panel / removal] --> PAN[core panel compiler] --> OUT
+  FO -- ABS --> SC[compose_block_signals] --> SIG[core signaling compiler] --> OUT
+  FO --> CE[configEditor drafts] --> Save[Save / Sync Panel]
+  Read[one facilities read: normalize + migrate] --> LS[LayoutState]
+  Read --> FStore[facilities store]
+  ELS -- usage from slots + ABS + panel records --> Chan[Channels panel]
+```
+
+### Patterns
+
+- **Facility composes into configuration edits**: the panel record is the intent. Its effect on hardware is ordinary configuration edits that Save writes. This is the ABS route; the Block Indicator bowtie route is retired.
+- **Functional core, imperative shell**: a pure panel compiler in core. The backend gathers board facts, and `facilityOrchestrator` stages the edits, rolling back on failure.
+- **Derived claims**: a panel's pins are derived from the lamp channels in its `lamps` slot and never stored.
+- **Load-time conversion**: one facilities read converts Block Indicators into panels. The converted form is the baseline, and a "needs save" flag marks the layout changed.
+
+### Module Changes
+
+| Module | Today | After |
+|---|---|---|
+| `behavior_templates.rs` | Block Indicator, ABS | Panel, ABS. `"block-indicator"` is kept only as migration input. |
+| `layout/facilities.rs`, `manifest.rs` | Facility with an optional ABS record; manifest 5 | Optional panel record and `SetPanelRecord`; facilities "3.0"; manifest 6 |
+| `layout/mod.rs`, `io.rs` | Two facilities reads, one raw | One read that normalizes and migrates |
+| `core panel/` (new) | — | Panel compiler: lamp-row edits, resets, issues |
+| `core layout/panel_migration.rs` (new) | — | Block Indicator → Panel conversion |
+| `core signaling/outputs.rs`, `slots.rs`, `facts.rs` | Pin owners and claimed slots for ABS | Pin label visible within the crate; claims and attribution include panel lamps |
+| `facility_bowties` + command | Composes Block Indicator bowties | Deleted |
+| Backend panel commands (new) | — | Wiring facts, compose, removal |
+| `facilityOrchestrator` | Slot pickers, bowtie composition, ABS staging | Panel and ABS staging; slot pickers and bowtie code deleted |
+| `panelEditor` store and orchestrator (new) | — | Steps, entries, wiring, "lit when" |
+| Pin-seat rule in `utils/` (new) | Inside `blockSignalsEditor.seatLamp` | Shared by the Panel and ABS editors |
+| `effectiveLayoutStore` | Status and channel usage from slots | Panel status; usage from slots and ABS and panel records |
+| `facilities` store | Slot bindings, ABS record drafts | Panel record drafts; "needs save" after migration |
+| `components/Panel/*` (new) | — | Editor, Blocks, Wiring, card, remove dialog |
+| `FacilitySlot` + pickers, route slot handlers | Block Indicator editing | Deleted |
+| Routes and components importing edit stores | Direct imports | Through `$lib/layout` only |
+
+### Behavior Summary
+
+| Slice | User-visible change | Demoable? |
+|---|---|---|
+| S1: One-board panel, end to end | Add a Panel, add blocks, wire each to any pin, Done, Save; lamps follow their blocks | Yes |
+| S2: Panel card and channel usage | One card per panel with blocks in order, live lamp state and honest status; Channels "Used by" names panels and ABS | Yes |
+| S3: Blocks step and "lit when" | Add all blocks from a signals facility or board; reorder; re-point; lit when Clear and per-block override | Yes |
+| S4: Edit, release and remove | Rewire and remove with only dropped pins reset; release outside pins; confirmed removal | Yes |
+| S5: Migrate Block Indicators and retire them | Old layouts open as panels with a notice, lamps still working, nothing written | Yes |
+| S6: Route all layout imports through the facade | Invariant preserved: app behaves exactly as before | No (REFACTOR) |
+
+---
+
+## Roadmap
+
+| # | Slice title | Label | Blocked by | Status |
+|---|---|---|---|---|
+| S1 | One-board panel, end to end | HITL | None | tasked |
+| S2 | Panel card and channel usage | AFK | S1 | sketched |
+| S3 | Blocks step and "lit when" | AFK | S1 | sketched |
+| S4 | Edit, release and remove | HITL | S1 | sketched |
+| S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | sketched |
+| S6 | Route all layout imports through the facade | REFACTOR | S5 | sketched |
+
+### S1: One-board panel, end to end [HITL]
+
+**Intent**: Name a Panel, add blocks one at a time, wire each to any pin, then Done and Save. The lamps follow their blocks.
+**Boundary**: Components → panel editor store/orchestrator → facilityOrchestrator → facilities, channels and config drafts → API → backend commands → core panel compiler and signaling outputs → Save → Signal LCC
+**Blocked by**: None
+**Status**: tasked
+
+**Acceptance criteria**:
+- [ ] Add facility offers Panel. Naming one opens the Blocks step, empty, with guidance.
+- [ ] Blocks are added one at a time from a searchable list grouped by detector board. A block can't be added twice.
+- [ ] Wiring lists the blocks with their status. Picking a board shows its pins labelled as the board labels them (#1 H1-G … #16 H4-L), each with its owner.
+- [ ] Clicking a free pin wires the selected block. Clicking the same pin again clears it.
+- [ ] Pins used by Automatic Block Signals can't be chosen, and Automatic Block Signals can't take panel pins.
+- [ ] Done with an unwired block still creates the panel. The Save toolbar and the close prompt show unsaved changes. Cancel leaves nothing behind.
+- [ ] Save while connected: blocks wired to #9, #3 and #14 each light their own LED. Offline, the changes wait in the Sync Panel.
+- [ ] The Channels panel lists the panel's lamp channels. The Railroad tab shows a card for the panel with its status.
+- [ ] Reopening the layout restores the panel. A version 6 layout opens; a newer one is refused with the "newer Bowties" message.
+
+**Architecture note** *(HITL, new seam)*: Sets up the panel compile-and-stage pattern (record → pure compiler → staged configuration edits), the `panel_wiring_facts` and `compose_panel` IPC contracts, the shared pin-seat rule, and panel lamps as claimed pins in `signaling/`. The ADR-0012 Unknown audit rows are confirmed for the new paths. New code imports only through `$lib/layout`. The F7 wording fixes are made as each file is touched; the Panel glossary term is added.
+
+**Complexity**: large
+**User stories**: US1 (scenarios 1, 2, 5, 6, 7), US2 (minimal card only)
+
+**UI contract**: [mockups.html](mockups.html) `#add`, `#blocks`, `#wiring`, `#railroad`. Allowed S1 differences, rendered disabled in place so the layout matches the mockup: "Add all blocks from" (S3), reorder ↑/↓ (S3), "Lit when" panel and per-block controls (S3, fixed at Occupied), and Release on outside pins (S4; outside pins show their Lamp Description and can't be chosen). Remove × on the Blocks step works in S1 because a new panel's entries are editor-only. The Railroad card in S1 shows name, Panel chip, status and the block count; per-entry tiles and live lamp state come in S2.
+
+**Decisions** *(approved 2026-11-25)*: D1 lamp identity is its Direct Lamp row and the pin is that row's effective Lamp Selection; D2 one claims function over facilities and channels, with `ClaimedSlotKind::DirectLamp`; D3 one staging transaction in `facilityOrchestrator`, with ABS as its first user.
+
+**Tasks**:
+- [x] S1-T1: Integration tests. Frontend (`RailroadPanel.panel.integration.test.ts`, modelled on "Done to Discard (E1a-T1)"): Add facility → Panel → name → add three blocks → wire #9, #3, #14 → Done. Asserts one facility, three lamp channels on `lamps`, unsaved Lamp Selection/On/Off/Description edits on the assigned rows, the Save toolbar dirty, the Channels rows and the Railroad card. Cancel leaves nothing. Clicking a block's own pin clears it. ABS-owned pins are not choosable. Rust (`bowties-core/tests/panel_compiler.rs`): #9/#3/#14 compile to edits on three rows with Lamp Selection = pin; a pin claimed elsewhere is a blocking issue.
+- [x] S1-T2: Core layout. Add the `PANEL` template to `REGISTRY` (Block Indicator stays until S5). Add `PanelRecord`/`PanelEntry` on `Facility`, the `SetPanelRecord` delta and the record-vs-`lamps`-slot agreement check. Facilities `SCHEMA_VERSION` "3.0"; `LAYOUT_SCHEMA_VERSION` 6 (4 and 5 open, 7 refused with the "newer Bowties" message). Roundtrip tests.
+- [x] S1-T3: Core signaling claims (D2). `claimed_slots_where(facilities, channels)` adds `ClaimedSlotKind::DirectLamp` for each panel lamp row, through a panel-module helper. `attribute_output_facilities` names the panel for `DirectLamp(row)` owners. `overlay_releases` refuses claimed Direct Lamp rows. Update every caller to pass effective channels. Make the pin label visible within the crate. Unit tests, including the changed "direct lamp stays unattributed" test.
+- [x] S1-T4: Core panel compiler (D1), in `bowties-core/src/panel/`. Input: record, lamps `{entryId, nodeKey, output, currentRow?}`, board facts. It keeps a lamp's row, otherwise allocates a free row (row == pin when free, else the lowest). It emits Lamp Selection = pin, Lamp On and Lamp Off from the block's occupancy events by effective "lit when", and Lamp Description = lamp name. It returns the row assignments and the issues `pinOwnedElsewhere`, `duplicatePin`, `blockEventsUnresolved`, `boardUnavailable` and `noFreeLampRow`, with edits grouped per node. Pure, typed issues, no panics.
+- [x] S1-T5: Backend. `panel_wiring_facts` (16 labelled pins per Signal LCC, owner free / panel / facility / outside with Lamp Description, from the effective layout) and `compose_panel` (no writes, no draft mutation). Register both in `lib.rs`. Rust tests.
+- [x] S1-T6: Frontend API and shared rule. `api/panels.ts` for typed IPC. A pure pin-seat rule in `utils/` (seat / clear / move with message / outside / not choosable); `blockSignalsEditor.seatLamp` uses it. Unit tests; ABS store tests stay green.
+- [x] S1-T7: `facilityOrchestrator` (D3). Extract the staging transaction (sync → compose → refuse on issues → wrapped mutations that record their inverse → post-commit deletes) with ABS as its first user, keeping the ABS tests green. Then add `createPanelFacility`. Facilities store: `setPanelRecord`, and attaches folded into a pending AddFacility.
+- [x] S1-T8: `panelEditor` store and `panelEditorOrchestrator`: steps and step-bar counts, add a block (no duplicates), select an entry, wiring facts per board shown, pin click through the shared rule, Done → `createPanelFacility`, Cancel. Register in the lifecycle reset. Store and orchestrator tests.
+- [x] S1-T9: Components (imports through `$lib/layout` only). `AddFacilityDialog` offers Panel. `components/Panel/PanelEditor`, `BlocksStep` (searchable list grouped by detector board, "on panel" chip), `WiringStep` (block list with status, board select, pin grid by head with legend and owners) and a minimal `PanelCard` in `FacilitiesSection`. Component tests.
+- [x] S1-T10: Docs. Glossary: the Panel term, plus the F7 fixes for Claimed Resource (derived; panels claim Direct Lamp rows) and the "at most one facility slot" rule. data-model.md and contracts/tauri-ipc.md updated for D1 (pins keyed by `output`, row assignments). ADR extensions: 0012 (Direct Lamp claims; staging transaction spans facility kinds), 0013 (lamp identity = row, pin = effective Lamp Selection), 0005 (manifest 6). aiwiki owners, flows and seams.
+- [ ] S1-T11: Validate. `cargo test -p bowties-core`; app crate tests (`cargo test -p app`, or `cargo check --tests` where only that is supported); `npm test`; `npm run check`; `cargo clippy -p bowties-core -p app -- -D warnings`. Check the changed-file set against the expected surface. Compare the running app against the mockup's `#add`, `#blocks`, `#wiring` and `#railroad` with the allowed differences above, and record the results here. Bench: #9, #3, #14 on a Signal LCC.
+
+**S1 validation record (2026-11-25)**:
+- Automated: `bowties-core` `cargo test` 562 lib + all integration suites green (incl. `panel_compiler.rs` 12, `panel_layout_roundtrip.rs` 3). App crate `cargo test --lib` 135 passed, 2 failed in untouched files (`events/router.rs` node ID format, `profile/loader.rs` BOD4 rules); not caused by this slice, not yet re-run on a clean checkout. Frontend `vitest run` 147 files / 1834 tests green. svelte-check 113 errors / 2 warnings, identical to committed HEAD. `cargo clippy -D warnings` fails on pre-existing lints only; none in new panel code.
+- Timing risk: `RailroadPanel.panel.integration.test.ts` first test timed out once while cargo built in parallel; green alone (1.7 s) and in a clean full run. Same class as the ABS edit tests note in owners.md.
+- Found and fixed during build: ABS update rollback left a newly created signal channel attached to `signals` (fixed by the staging transaction); ABS BlocksStep stored extra block fields (now picks `{blockId, name}`).
+- PENDING (caller gates): running-app comparison against mockups `#add`, `#blocks`, `#wiring`, `#railroad` with the allowed differences above, and the bench check (#9, #3, #14 on a Signal LCC). Slice stays `tasked` until both are recorded.
+- 2026-11-26 user check: one block wired and lit on the bench (works). Running-app review found three follow-ups, fixed before S1 closes: (1) Wiring's board picker is a plain node-type/address combo; reuse the ABS node selector (richer label plus search dialog). (2) Each step shows a message in the footer row beside Cancel/Next; remove or move it. (3) Regression from Spec 020: the ABS wiring step shows only the selected signal's pins as taken; pins of other signals in the same edit show as free.
+- Known S1 limits carried to later slices: the panel card has no Edit or Remove (S4); deleting a panel any other way is not offered; boards appear in Wiring only when a Signal LCC profile matches (same as ABS).
+
+### S2: Panel card and channel usage [AFK]
+
+**Intent**: One card per panel shows its blocks in order, with live lamp state and an honest status.
+**Boundary**: Components → effectiveLayoutStore → eventState
+**Re-cut after S1**: extend the existing `Panel/PanelCard.svelte` and `effectiveLayoutStore.panelStatus` (Empty / Incomplete / Wired from the record) rather than adding new ones. Pins on the card are labelled from the row's effective Lamp Selection (D1), never from the row number. `detectedBlocks` already carries `board`.
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] The card lists blocks in panel order, each with its pin or "needs a lamp", and its lamp as lit, unlit, or unknown until an event is seen.
+- [ ] Status is Empty, "Incomplete, N need a lamp", or Wired. A block that is no longer detected, or a lamp whose board is missing, counts as Incomplete and is labelled on its entry.
+- [ ] Board changes not yet written show as waiting, per board.
+- [ ] The Channels panel's "Used by" names both the panel and the Automatic Block Signals facility for a shared block.
+- [ ] A layout with 24 lamps on two panels shows 2 cards.
+
+### S3: Blocks step and "lit when" [AFK]
+
+**Intent**: Build a panel quickly from an existing signals facility or detector board, and choose when lamps light.
+**Boundary**: Components → panel editor store/orchestrator → facilityOrchestrator → compiler
+**Re-cut after S1**: the compiler already applies panel and per-entry "lit when"; S3 enables the disabled controls (Add all, ↑/↓, Lit when) in place and adds re-pointing in the store. "Add all from a signals facility" can read `detectedBlocks[].facility` plus the ABS record order.
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] "Add all from" a signals facility adds its blocks in travel order; from a detector board, in input order. Blocks already on the panel are skipped. Later changes to that facility or board don't change the panel.
+- [ ] Blocks can be reordered and removed. Wiring and the card follow the new order.
+- [ ] An entry can be pointed at a different block, keeping its pin and position.
+- [ ] Panel "lit when Clear" lights lamps on clear. A per-block override shows on its entry and wins over the panel setting.
+
+### S4: Edit, release and remove [HITL]
+
+**Intent**: Change or remove a panel safely; only that panel's pins change.
+**Boundary**: Components → orchestrators → compiler resets and releases → drafts → Save
+**Re-cut after S1**: adds Edit and Remove to `PanelCard` (none in S1), `updatePanelFacility` and `removePanelFacility` on the existing staging transaction (`tx.setPanelRecord` is ready), and `deleteFacility` routing for `panel`. A same-board pin move changes only Lamp Selection on the kept row (no rebind, nothing to reset); resets apply to dropped rows (`direct_lamp_reset_edits` via `facility_claimed_slots`). Release goes through `overlay_releases`, which already refuses claimed rows.
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Moving a lamp from #6 to #12 and saving: #12 follows the block and #6 is reset.
+- [ ] Removing a block resets its pin. The block, its detector and a signals facility using it are unchanged.
+- [ ] Choosing another block's pin moves it, and a message says the other block now needs a lamp.
+- [ ] A pin used outside Bowties shows its Lamp Description and can be used only after Release. The release is written together with the panel's changes.
+- [ ] Remove asks for confirmation naming the pins per board, then resets only those pins. The lamp channels leave the Channels panel and the blocks remain.
+- [ ] Cancelling the editor on an existing panel leaves it unchanged.
+
+**Architecture note** *(HITL)*: Lamp-row reset recipe and release through the existing `overlay_releases`. Removal must never touch pins the panel did not claim.
+
+### S5: Migrate Block Indicators and retire them [HITL]
+
+**Intent**: Layouts with Block Indicators open as panels, with the lamps still working and nothing written to the boards.
+**Boundary**: Route → facilities store → API → backend open/list → core single facilities read and migration
+**Re-cut after S1**: migrated lamps keep their row and hand-set Lamp Selection (D1); a migrated row with Lamp Selection 0 is a lamp with no pin and should show as needing a pin. Block Indicator is still offered in Add facility until this slice. Re-check the two backlog Lamp Selection items afterwards.
+**Blocked by**: S1 + S2
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] A 0.4.x layout with Block Indicators on two boards opens as two panels named after the boards, blocks in the old order, lamps named after the old facilities.
+- [ ] A Block Indicator with a block but no lamp goes into one "Indicators without a lamp" panel, shown as Incomplete. One with no block is dropped.
+- [ ] A notice says how many Block Indicators became how many panels.
+- [ ] The Save toolbar and the close prompt show unsaved changes. Discard keeps the panels. Nothing waits in the Sync Panel, and the lamps still follow occupancy.
+- [ ] Add facility no longer offers Block Indicator.
+- [ ] The old bowtie names still appear on the Bowties tab.
+- [ ] A layout without Block Indicators opens unchanged and isn't marked changed.
+
+**Architecture note** *(HITL, seam change)*: One facilities read serves both open and list (F1). The migrated document is the baseline, with a "needs save" flag as a new input to the Dirty Aggregation seam (F2). Block Indicator bowtie composition, the slot pickers and their route handlers are deleted (F4).
+
+### S6: Route all layout imports through the facade [REFACTOR]
+
+**Intent**: Invariant preserved. The app behaves exactly as before; routes and components reach layout state only through `$lib/layout`.
+**Boundary**: Routes and components → `$lib/layout`
+**Blocked by**: S5
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Save, Discard, the close prompt, and the Bowties, Configuration and Railroad tabs behave as before.
+- [ ] A guard test fails if a route or component imports an edit-layer store directly.
+- [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
+
+<!-- Session: 2026-11-25 — S1 implemented and green (tasks T1–T10 checked); T11 caller gates pending: running-app mockup comparison and bench (#9, #3, #14). Next: finish S1 gates, then S2 (AFK) or S3 (AFK). -->

@@ -382,6 +382,11 @@ describe('layoutLifecycleOrchestrator.closeLayout', () => {
 });
 
 describe('registry-based dispatch', () => {
+  it('registers the Panel editor so a layout reset closes it', async () => {
+    const { panelEditorOrchestrator } = await import('./panelEditorOrchestrator');
+    expect(layoutScopedParticipants).toContain(panelEditorOrchestrator);
+  });
+
   it('resetForNewLayout dispatches to all registered participants', async () => {
     const spies = layoutScopedParticipants
       .filter((p: { resetForNewLayout?: unknown }) => typeof p.resetForNewLayout === 'function')

@@ -123,7 +123,26 @@ pub const AUTOMATIC_BLOCK_SIGNALS: BehaviorTemplate = BehaviorTemplate {
     mapping: &[],
 };
 
-const REGISTRY: &[BehaviorTemplate] = &[BLOCK_INDICATOR, AUTOMATIC_BLOCK_SIGNALS];
+const PANEL_SLOTS: &[SlotDefinition] = &[SlotDefinition {
+    label: "lamps",
+    display_label: "lamps",
+    kind: SlotKind::Consumer,
+    required_role: "lamp-indicator",
+    min_channels: 0,
+    max_channels: None,
+}];
+
+/// Panel (Spec 021). One unbounded `lamps` slot (the only lamp membership
+/// source) and no state mapping: its configuration is compiled, so bowtie
+/// composition never applies.
+pub const PANEL: BehaviorTemplate = BehaviorTemplate {
+    template_id: "panel",
+    display_name: "Panel",
+    slots: PANEL_SLOTS,
+    mapping: &[],
+};
+
+const REGISTRY: &[BehaviorTemplate] = &[BLOCK_INDICATOR, AUTOMATIC_BLOCK_SIGNALS, PANEL];
 
 /// All registered templates.
 pub fn registered_templates() -> &'static [BehaviorTemplate] {
@@ -157,7 +176,7 @@ mod tests {
     #[test]
     fn registry_contains_block_indicator() {
         let templates = registered_templates();
-        assert_eq!(templates.len(), 2);
+        assert_eq!(templates.len(), 3);
         assert_eq!(templates[0].template_id, "block-indicator");
         assert_eq!(templates[0].display_name, "Block Indicator");
         let abs = find_template("automatic-block-signals").expect("ABS registered");
@@ -168,6 +187,20 @@ mod tests {
         assert!(abs.mapping.is_empty());
         assert!(!abs.composes_bowties());
         assert!(BLOCK_INDICATOR.composes_bowties());
+    }
+
+    #[test]
+    fn panel_template_has_one_unbounded_lamps_slot_and_composes_nothing() {
+        let panel = find_template("panel").expect("panel registered");
+        assert_eq!(panel.display_name, "Panel");
+        assert_eq!(panel.slots.len(), 1);
+        let lamps = panel.find_slot("lamps").expect("lamps slot");
+        assert_eq!(lamps.kind, SlotKind::Consumer);
+        assert_eq!(lamps.required_role, "lamp-indicator");
+        assert_eq!(lamps.min_channels, 0);
+        assert_eq!(lamps.max_channels, None);
+        assert!(panel.mapping.is_empty());
+        assert!(!panel.composes_bowties());
     }
 
     #[test]

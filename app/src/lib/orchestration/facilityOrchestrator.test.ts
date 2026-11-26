@@ -993,6 +993,42 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
     expect(facilitiesStore.collectDeltas()).toEqual([]);
     expect(channelsStore.collectDeltas()).toEqual([]);
   });
+
+  it('restores the stores exactly when the last staging step fails on an update that also adds a signal', async () => {
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+    vi.mocked(composeBlockSignals).mockResolvedValue({
+      ...COMPOSED,
+      signalResources: [
+        ...COMPOSED.signalResources,
+        { signalId: 's2', resources: { nodeKey: ABS_NODE, mast: 11, trackCircuits: [] } },
+      ],
+    } as never);
+
+    const result = await orch.updateBlockSignalsFacility(updateArgs({
+      name: 'Renamed line',
+      wiring: [
+        { signalId: 's1', nodeKey: ABS_NODE, redOutput: 3, greenOutput: 4 },
+        { signalId: 's2', nodeKey: ABS_NODE, redOutput: 5, greenOutput: 6 },
+      ],
+      signals: [
+        { signalId: 's1', name: 'Signal Z', protectedBlock: 'b1' },
+        { signalId: 's2', name: 'Signal B', protectedBlock: 'b2' },
+      ],
+    }));
+
+    expect(result).toMatchObject({ ok: false });
+    expect(facilitiesStore.facilities[0].slotBindings.signals).toEqual(['ch-sig-1']);
+    expect(facilitiesStore.facilities[0].blockSignals?.signals).toHaveLength(1);
+    expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-sig-1']);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
 });
 
 // ── Spec 020 / E2b — removeBlockSignalsFacility ──
@@ -1274,5 +1310,137 @@ describe('createBlockSignalsFacility with released owners (Spec 020 / E2c B3)', 
     expect(configChangesStore.draftEntries()).toEqual([
       { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
     ]);
+  });
+});
+
+// ── Spec 021 — createPanelFacility (shared staging pipeline) ──
+
+vi.mock('$lib/api/panels', () => ({
+  composePanel: vi.fn(),
+  panelWiringFacts: vi.fn(),
+}));
+const { composePanel } = await import('$lib/api/panels');
+
+describe('createPanelFacility (Spec 021 — facilityOrchestrator)', () => {
+  const PANEL_TEMPLATE: BehaviorTemplate = {
+    templateId: 'panel',
+    displayName: 'Panel',
+    slots: [
+      { label: 'lamps', displayLabel: 'lamps', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: null },
+    ],
+    mapping: [],
+  };
+  const BOARD = '050101018800';
+
+  const PANEL_COMPOSED = {
+    edits: [9, 3, 14].map((row) => ({
+      nodeKey: BOARD, space: 253, address: row * 16, path: `lamp${row}`, value: { type: 'int', value: row },
+    })),
+    assignments: [
+      { entryId: 'e1', nodeKey: BOARD, row: 9 },
+      { entryId: 'e2', nodeKey: BOARD, row: 3 },
+      { entryId: 'e3', nodeKey: BOARD, row: 14 },
+    ],
+    issues: [],
+  };
+
+  function panelArgs(): Parameters<typeof orch.createPanelFacility>[0] {
+    return {
+      facilityId: 'panel-1',
+      name: 'Tower panel',
+      record: {
+        litWhen: 'occupied',
+        entries: [
+          { entryId: 'e1', blockId: 'b1' },
+          { entryId: 'e2', blockId: 'b2' },
+          { entryId: 'e3', blockId: 'b3' },
+          { entryId: 'e4', blockId: 'b4' },
+        ],
+      },
+      lamps: [
+        { entryId: 'e1', nodeKey: BOARD, output: 9, name: 'Lamp 1' },
+        { entryId: 'e2', nodeKey: BOARD, output: 3, name: 'Lamp 2' },
+        { entryId: 'e3', nodeKey: BOARD, output: 14, name: 'Lamp 3' },
+      ],
+    };
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    facilitiesStore.hydrateBaseline([]);
+    channelsStore.hydrateBaseline([]);
+    vi.mocked(composePanel).mockReset();
+    vi.mocked(composePanel).mockResolvedValue(PANEL_COMPOSED as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, PANEL_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('stages the facility, one lamp channel per assigned row, the record and the edits with the facility id', async () => {
+    const result = await orch.createPanelFacility(panelArgs());
+
+    expect(result).toEqual({ ok: true });
+    const lampChannels = channelsStore.channels;
+    expect(lampChannels.map((c) => c.name)).toEqual(['Lamp 1', 'Lamp 2', 'Lamp 3']);
+    expect(lampChannels.map((c) => c.binding)).toEqual([
+      { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 9 },
+      { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 3 },
+      { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 14 },
+    ]);
+    expect(lampChannels[0]).toMatchObject({ role: 'lamp-indicator', style: 'single-led-direct-lamp', ownership: 'user-owned' });
+
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'panel-1')!;
+    expect(facility.templateId).toBe('panel');
+    expect(facility.slotBindings.lamps).toEqual(lampChannels.map((c) => c.id));
+    expect(facility.panel?.entries.map((e) => e.lampChannelId)).toEqual([
+      lampChannels[0].id, lampChannels[1].id, lampChannels[2].id, undefined,
+    ]);
+    expect(facility.panel?.entries[3]).not.toHaveProperty('lampChannelId');
+    expect(facilitiesStore.collectDeltas().filter((d) => d.type === 'addFacility')).toHaveLength(1);
+
+    const request = vi.mocked(composePanel).mock.calls[0][0];
+    expect(request.facilityId).toBe('panel-1');
+    expect(request.lamps.map((l) => l.output)).toEqual([9, 3, 14]);
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual(
+      PANEL_COMPOSED.edits.map((e) => editKeyForLeaf(BOARD, e.space, e.address)),
+    );
+    expect(await savedOrigins()).toEqual({
+      '0x00000090': { facilityId: 'panel-1' },
+      '0x00000030': { facilityId: 'panel-1' },
+      '0x000000E0': { facilityId: 'panel-1' },
+    });
+  });
+
+  it('stages nothing when compose reports issues', async () => {
+    const issues = [{ code: 'pinOwnedElsewhere', entryId: 'e1', nodeKey: BOARD, output: 9, detail: 'busy' }];
+    vi.mocked(composePanel).mockResolvedValue({ edits: [], assignments: [], issues } as never);
+
+    const result = await orch.createPanelFacility(panelArgs());
+
+    expect(result).toEqual({ ok: false, issues });
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(configChangesStore.draftEntries()).toEqual([]);
+  });
+
+  it('restores every store exactly when staging an edit fails', async () => {
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.createPanelFacility(panelArgs());
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: unknown }).error).toBeInstanceOf(Error);
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+    expect(configChangesStore.draftEntries()).toEqual([]);
   });
 });

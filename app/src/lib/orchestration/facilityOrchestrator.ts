@@ -35,7 +35,8 @@ import {
   type RemovalEdit,
   type SignalWiring,
 } from '$lib/api/signaling';
-import type { BlockSignalsRecord, NodeLogicPlacement } from '$lib/api/facilities';
+import type { BlockSignalsRecord, Facility, NodeLogicPlacement, PanelRecord } from '$lib/api/facilities';
+import { composePanel, type ComposePanelIssue } from '$lib/api/panels';
 import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 import { collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
@@ -479,105 +480,73 @@ async function stageBlockSignalsFacility(
   if (target === 'update' && !priorFacility?.blockSignals) {
     return { ok: false, error: new UnknownReferenceError('facility') };
   }
+  const savedSignals = priorFacility?.blockSignals?.signals ?? [];
 
-  let composed;
-  try {
-    await syncDraftsForComposition();
-    composed = await composeBlockSignals({ facilityId, line, wiring, release });
-  } catch (error) {
-    return { ok: false, error };
-  }
-  if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
-
-  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
-  const priorPlacement = placementOf(composed.logicPlacement);
-  const priorChannels = new Map(channelsStore.channels.map((c) => [c.id, c]));
-  const createdChannelIds: string[] = [];
-  let facilityAdded = false;
-  try {
-    const wiringBySignal = new Map(wiring.map((w) => [w.signalId, w]));
-    const savedChannelIds = new Map(
-      (priorFacility?.blockSignals?.signals ?? []).map((s) => [s.signalId, s.channelId]),
-    );
-    const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
-      const wired = wiringBySignal.get(signal.signalId);
-      if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
-      const resources = composed.signalResources.find((r) => r.signalId === signal.signalId)?.resources;
-      if (!resources) throw new Error(`No board resources planned for signal '${signal.signalId}'`);
-      const binding = {
-        kind: 'signalLccRgOutputs' as const,
-        nodeKey: wired.nodeKey,
-        greenOutput: wired.greenOutput,
-        redOutput: wired.redOutput,
-      };
-      const savedChannelId = savedChannelIds.get(signal.signalId);
-      if (savedChannelId) {
-        channelsStore.renameChannel(savedChannelId, signal.name);
-        channelsStore.rebindChannel(savedChannelId, binding);
-        return { ...signal, channelId: savedChannelId, resources };
-      }
-      const channel = channelsStore.createUserOwnedChannel({
-        role: 'signal-indication',
-        style: 'two-driver-rg-signal',
-        binding,
-        name: signal.name,
+  return runStagingTransaction({
+    compose: () => composeBlockSignals({ facilityId, line, wiring, release }),
+    stage: (tx, composed) => {
+      const wiringBySignal = new Map(wiring.map((w) => [w.signalId, w]));
+      const savedChannelIds = new Map(savedSignals.map((s) => [s.signalId, s.channelId]));
+      const createdChannelIds: string[] = [];
+      const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
+        const wired = wiringBySignal.get(signal.signalId);
+        if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
+        const resources = composed.signalResources.find((r) => r.signalId === signal.signalId)?.resources;
+        if (!resources) throw new Error(`No board resources planned for signal '${signal.signalId}'`);
+        const binding = {
+          kind: 'signalLccRgOutputs' as const,
+          nodeKey: wired.nodeKey,
+          greenOutput: wired.greenOutput,
+          redOutput: wired.redOutput,
+        };
+        const savedChannelId = savedChannelIds.get(signal.signalId);
+        if (savedChannelId) {
+          tx.renameChannel(savedChannelId, signal.name);
+          tx.rebindChannel(savedChannelId, binding);
+          return { ...signal, channelId: savedChannelId, resources };
+        }
+        const channel = tx.createUserOwnedChannel({
+          role: 'signal-indication',
+          style: 'two-driver-rg-signal',
+          binding,
+          name: signal.name,
+        });
+        createdChannelIds.push(channel.id);
+        return { ...signal, channelId: channel.id, resources };
       });
-      createdChannelIds.push(channel.id);
-      return { ...signal, channelId: channel.id, resources };
-    });
 
-    const record: BlockSignalsRecord = {
-      direction: line.direction,
-      movements: line.movements,
-      entranceEnd: line.entranceEnd,
-      exitEnd: line.exitEnd,
-      blocks: line.blocks,
-      settings: line.settings,
-      signals: recordSignals,
-    };
-    if (target === 'create') {
-      facilitiesStore.addFacility(template, name, facilityId, record);
-      facilityAdded = true;
-    } else {
-      facilitiesStore.setBlockSignalsRecord(facilityId, record);
-      facilitiesStore.renameFacility(facilityId, name);
-    }
-    for (const channelId of createdChannelIds) {
-      if (!facilitiesStore.attachChannel(facilityId, BLOCK_SIGNALS_SLOT, channelId)) {
-        throw new Error(`Failed to attach channel '${channelId}' to facility '${facilityId}'`);
+      const record: BlockSignalsRecord = {
+        direction: line.direction,
+        movements: line.movements,
+        entranceEnd: line.entranceEnd,
+        exitEnd: line.exitEnd,
+        blocks: line.blocks,
+        settings: line.settings,
+        signals: recordSignals,
+      };
+      if (target === 'create') {
+        tx.addFacility(template, name, facilityId, record);
+      } else {
+        tx.setBlockSignalsRecord(facilityId, record);
+        tx.renameFacility(facilityId, name);
       }
-    }
-
-    stageLogicPlacement(composed.logicPlacement);
-    stageComposedEdits(composed.edits, facilityId);
-
-    // Signals the edit turned off lose their channel. This runs after the only
-    // staging step that can throw, so a failure never leaves one half removed;
-    // Discard restores both through the draft layer (ADR-0012).
-    const keptSignalIds = new Set(signals.map((s) => s.signalId));
-    for (const saved of priorFacility?.blockSignals?.signals ?? []) {
-      if (keptSignalIds.has(saved.signalId)) continue;
-      facilitiesStore.detachChannel(facilityId, BLOCK_SIGNALS_SLOT, saved.channelId);
-      channelsStore.removeUserOwnedChannel(saved.channelId);
-    }
-    return { ok: true };
-  } catch (error) {
-    restoreConfigDrafts(composed.edits, priorDrafts);
-    if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
-    stageLogicPlacement(priorPlacement);
-    for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
-    if (priorFacility?.blockSignals) {
-      facilitiesStore.setBlockSignalsRecord(facilityId, priorFacility.blockSignals);
-      facilitiesStore.renameFacility(facilityId, priorFacility.name);
-      for (const s of priorFacility.blockSignals.signals) {
-        const prior = priorChannels.get(s.channelId);
-        if (!prior) continue;
-        channelsStore.renameChannel(prior.id, prior.name);
-        channelsStore.rebindChannel(prior.id, prior.binding);
+      for (const channelId of createdChannelIds) {
+        tx.attachChannel(facilityId, BLOCK_SIGNALS_SLOT, channelId);
       }
-    }
-    return { ok: false, error };
-  }
+      tx.logicPlacement(composed.logicPlacement);
+      tx.configEdits(composed.edits, facilityId);
+    },
+    // Signals the edit turned off lose their channel, after the last throwing
+    // step; Discard restores both through the draft layer (ADR-0012).
+    commit: () => {
+      const keptSignalIds = new Set(signals.map((s) => s.signalId));
+      for (const saved of savedSignals) {
+        if (keptSignalIds.has(saved.signalId)) continue;
+        facilitiesStore.detachChannel(facilityId, BLOCK_SIGNALS_SLOT, saved.channelId);
+        channelsStore.removeUserOwnedChannel(saved.channelId);
+      }
+    },
+  });
 }
 
 // ── Automatic Block Signals removal (Spec 020 / E2b) ─────────────────────
@@ -622,31 +591,205 @@ export async function removeBlockSignalsFacility(
     return { ok: false, error: new UnknownReferenceError('facility') };
   }
 
-  let edits: readonly RemovalEdit[] = [];
-  let placement: NodeLogicPlacement[] = [];
-  if (!leaveBoard) {
-    try {
-      await syncDraftsForComposition();
-      const composed = await composeBlockSignalsRemoval(facilityId);
-      if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
-      edits = composed.edits;
-      placement = composed.logicPlacement;
-    } catch (error) {
-      return { ok: false, error };
-    }
-  }
+  return runStagingTransaction({
+    sync: !leaveBoard,
+    compose: async () => (leaveBoard
+      ? { issues: [] as ComposeIssue[], edits: [] as readonly RemovalEdit[], logicPlacement: [] as NodeLogicPlacement[] }
+      : composeBlockSignalsRemoval(facilityId)),
+    stage: (tx, composed) => tx.configEdits(composed.edits, facilityId),
+    // After the delete, which already drops the facility's own groups: only a board
+    // whose remaining groups differ from that (another facility's group moved) stages a delta.
+    commit: (composed) => {
+      deleteFacilityAndChannels(facilityId, userOwnedChannelIdsOf(facilityId));
+      stageLogicPlacement(composed.logicPlacement);
+    },
+  });
+}
 
-  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
+// ── Panel creation (Spec 021) ────────────────────────────────────────────
+
+const PANEL_TEMPLATE_ID = 'panel';
+const PANEL_LAMPS_SLOT = 'lamps';
+
+export interface CreatePanelFacilityArgs {
+  /** ID minted by the editor; the compose request and the facility share it. */
+  facilityId: string;
+  name: string;
+  /** The panel's entries in order, without lamp channel IDs (assigned here). */
+  record: PanelRecord;
+  /** One per entry that has a lamp. */
+  lamps: { entryId: string; nodeKey: string; output: number; name: string }[];
+}
+
+export type CreatePanelFacilityResult =
+  | { ok: true }
+  | { ok: false; issues: ComposePanelIssue[] }
+  | { ok: false; error: unknown };
+
+/**
+ * Workflow owner: create a Panel facility. Composes the lamp wiring with
+ * fresh facts, refuses on any issue with nothing staged, then stages one
+ * user-owned lamp channel per assigned row, the facility with its record and
+ * lamp attachments, and the configuration edits as ordinary drafts. Any
+ * throw restores everything staged here. Never composes bowties.
+ */
+export async function createPanelFacility(
+  args: CreatePanelFacilityArgs,
+): Promise<CreatePanelFacilityResult> {
+  const { facilityId, name, record, lamps } = args;
+  const template = behaviorTemplatesStore.findByTemplateId(PANEL_TEMPLATE_ID);
+  if (!template) return { ok: false, error: new UnknownReferenceError('template') };
+
+  return runStagingTransaction({
+    compose: () => composePanel({ facilityId, record, lamps }),
+    stage: (tx, composed) => {
+      const lampNames = new Map(lamps.map((l) => [l.entryId, l.name]));
+      const channelIdByEntry = new Map<string, string>();
+      for (const assignment of composed.assignments) {
+        const channel = tx.createUserOwnedChannel({
+          role: 'lamp-indicator',
+          style: 'single-led-direct-lamp',
+          binding: { kind: 'lampRow', nodeKey: assignment.nodeKey, rowOrdinal: assignment.row },
+          name: lampNames.get(assignment.entryId) ?? '',
+        });
+        channelIdByEntry.set(assignment.entryId, channel.id);
+      }
+
+      tx.addFacility(template, name, facilityId);
+      tx.setPanelRecord(facilityId, {
+        ...record,
+        entries: record.entries.map((entry) => {
+          const lampChannelId = channelIdByEntry.get(entry.entryId);
+          return lampChannelId ? { ...entry, lampChannelId } : entry;
+        }),
+      });
+      for (const channelId of channelIdByEntry.values()) {
+        tx.attachChannel(facilityId, PANEL_LAMPS_SLOT, channelId);
+      }
+      tx.configEdits(composed.edits, facilityId);
+    },
+  });
+}
+
+// ── Staging transaction (ADR-0012: one staging pipeline) ─────────────────
+
+/**
+ * Store mutations for one facility-staging transaction. Each method applies the
+ * mutation and records its own inverse at that moment, so a throw anywhere
+ * later replays exactly what was staged, in reverse. Throwing store
+ * transitions only: deletes belong in the transaction's `commit` phase.
+ */
+interface StagingTransaction {
+  createUserOwnedChannel(input: Parameters<typeof channelsStore.createUserOwnedChannel>[0]): InformationChannel;
+  renameChannel(channelId: string, name: string): void;
+  rebindChannel(channelId: string, binding: InformationChannel['binding']): void;
+  addFacility(...args: Parameters<typeof facilitiesStore.addFacility>): Facility;
+  setBlockSignalsRecord(facilityId: string, record: BlockSignalsRecord): void;
+  setPanelRecord(facilityId: string, record: PanelRecord): void;
+  renameFacility(facilityId: string, name: string): void;
+  /** Throws when the store refuses the attach, so the transaction rolls back. */
+  attachChannel(facilityId: string, slotLabel: string, channelId: string): void;
+  logicPlacement(boards: readonly NodeLogicPlacement[]): void;
+  configEdits(edits: readonly RemovalEdit[], facilityId: string): void;
+}
+
+function beginStagingTransaction(): { tx: StagingTransaction; rollback: () => void } {
+  const inverses: (() => void)[] = [];
+  const tx: StagingTransaction = {
+    createUserOwnedChannel(input) {
+      const channel = channelsStore.createUserOwnedChannel(input);
+      inverses.push(() => channelsStore.removeUserOwnedChannel(channel.id));
+      return channel;
+    },
+    renameChannel(channelId, name) {
+      const prior = channelsStore.channels.find((c) => c.id === channelId);
+      channelsStore.renameChannel(channelId, name);
+      if (prior) inverses.push(() => channelsStore.renameChannel(channelId, prior.name));
+    },
+    rebindChannel(channelId, binding) {
+      const prior = channelsStore.channels.find((c) => c.id === channelId);
+      channelsStore.rebindChannel(channelId, binding);
+      if (prior) inverses.push(() => channelsStore.rebindChannel(channelId, prior.binding));
+    },
+    addFacility(...args) {
+      const facility = facilitiesStore.addFacility(...args);
+      inverses.push(() => facilitiesStore.deleteFacility(facility.facilityId));
+      return facility;
+    },
+    setBlockSignalsRecord(facilityId, record) {
+      const prior = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)?.blockSignals;
+      facilitiesStore.setBlockSignalsRecord(facilityId, record);
+      if (prior) inverses.push(() => facilitiesStore.setBlockSignalsRecord(facilityId, prior));
+    },
+    setPanelRecord(facilityId, record) {
+      const prior = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)?.panel;
+      facilitiesStore.setPanelRecord(facilityId, record);
+      if (prior) inverses.push(() => facilitiesStore.setPanelRecord(facilityId, prior));
+    },
+    renameFacility(facilityId, name) {
+      const prior = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+      facilitiesStore.renameFacility(facilityId, name);
+      if (prior) inverses.push(() => facilitiesStore.renameFacility(facilityId, prior.name));
+    },
+    attachChannel(facilityId, slotLabel, channelId) {
+      if (!facilitiesStore.attachChannel(facilityId, slotLabel, channelId)) {
+        throw new Error(`Failed to attach channel '${channelId}' to facility '${facilityId}'`);
+      }
+      inverses.push(() => facilitiesStore.detachChannel(facilityId, slotLabel, channelId));
+    },
+    logicPlacement(boards) {
+      const prior = placementOf(boards);
+      inverses.push(() => stageLogicPlacement(prior));
+      stageLogicPlacement(boards);
+    },
+    configEdits(edits, facilityId) {
+      const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
+      // Recorded before staging: a throw part-way through still restores the leaves staged so far.
+      inverses.push(() => restoreConfigDrafts(edits, priorDrafts));
+      stageComposedEdits(edits, facilityId);
+    },
+  };
+  return {
+    tx,
+    rollback: () => {
+      for (const inverse of inverses.reverse()) inverse();
+    },
+  };
+}
+
+/**
+ * One staging pipeline for compiled facilities. Mirrors drafts and composes
+ * with fresh facts (skipped when `sync` is false), refuses on any issue with
+ * nothing staged, runs `stage` through the transaction's recorded-inverse
+ * mutations (any throw replays them in reverse), then runs the non-throwing
+ * `commit` phase (deletes) after the last throwing step.
+ *
+ * Each facility kind supplies its own typed `stage` and `commit`; the record
+ * setters and channel plans stay per-kind.
+ */
+async function runStagingTransaction<I, C extends { issues: I[] }>(plan: {
+  sync?: boolean;
+  compose: () => Promise<C>;
+  stage: (tx: StagingTransaction, composed: C) => void;
+  commit?: (composed: C) => void;
+}): Promise<{ ok: true } | { ok: false; issues: I[] } | { ok: false; error: unknown }> {
+  let composed: C;
   try {
-    stageComposedEdits(edits, facilityId);
+    if (plan.sync ?? true) await syncDraftsForComposition();
+    composed = await plan.compose();
   } catch (error) {
-    restoreConfigDrafts(edits, priorDrafts);
     return { ok: false, error };
   }
-  deleteFacilityAndChannels(facilityId, userOwnedChannelIdsOf(facilityId));
-  // After the delete, which already drops the facility's own groups: only a board
-  // whose remaining groups differ from that (another facility's group moved) stages a delta.
-  stageLogicPlacement(placement);
+  if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
+
+  const { tx, rollback } = beginStagingTransaction();
+  try {
+    plan.stage(tx, composed);
+  } catch (error) {
+    rollback();
+    return { ok: false, error };
+  }
+  plan.commit?.(composed);
   return { ok: true };
 }
 

@@ -3,6 +3,7 @@ import {
   type BlockSignalsRecord,
   type Facility,
   type NodeLogicPlacement,
+  type PanelRecord,
   type PlacedLogicGroup,
   type SlotBinding,
 } from '$lib/api/facilities';
@@ -55,6 +56,8 @@ class FacilitiesStore {
    * inside their own entry instead.
    */
   private _pendingBlockSignals = $state<Map<string, BlockSignalsRecord>>(new Map());
+  /** Pending whole-record replacements of a baseline facility's `panel` (Spec 021). */
+  private _pendingPanels = $state<Map<string, PanelRecord>>(new Map());
   /** Per-board Logic placement loaded from disk (baseline). */
   private _baselinePlacement = $state<NodeLogicPlacement[]>([]);
   /**
@@ -74,7 +77,8 @@ class FacilitiesStore {
       const newName = this._pendingRenames.get(f.facilityId);
       const slotOverrides = this._pendingSlotBindings.get(f.facilityId);
       const blockSignals = this._pendingBlockSignals.get(f.facilityId);
-      if (newName === undefined && !slotOverrides && !blockSignals) return f;
+      const panel = this._pendingPanels.get(f.facilityId);
+      if (newName === undefined && !slotOverrides && !blockSignals && !panel) return f;
       const slotBindings: Record<string, SlotBinding> = { ...f.slotBindings };
       if (slotOverrides) {
         for (const [label, vec] of slotOverrides) {
@@ -85,6 +89,7 @@ class FacilitiesStore {
         ...f,
         ...(newName !== undefined ? { name: newName } : {}),
         ...(blockSignals ? { blockSignals } : {}),
+        ...(panel ? { panel } : {}),
         slotBindings,
       };
     });
@@ -103,6 +108,7 @@ class FacilitiesStore {
       || this._pendingDeletions.size > 0
       || this._pendingSlotBindings.size > 0
       || this._pendingBlockSignals.size > 0
+      || this._pendingPanels.size > 0
       || this._pendingPlacement.size > 0
     );
   }
@@ -116,6 +122,7 @@ class FacilitiesStore {
       + this._pendingDeletions.size
       + slotEdits
       + this._pendingBlockSignals.size
+      + this._pendingPanels.size
     );
     // Placement follows the facility edit that planned it, so it is not a
     // second edit; a placement change alone still counts.
@@ -166,6 +173,7 @@ class FacilitiesStore {
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPanels = new Map();
     this._pendingPlacement = new Map();
   }
 
@@ -178,6 +186,7 @@ class FacilitiesStore {
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPanels = new Map();
     this._pendingPlacement = new Map();
   }
 
@@ -231,6 +240,9 @@ class FacilitiesStore {
     for (const [facilityId, record] of this._pendingBlockSignals) {
       deltas.push({ type: 'setBlockSignalsRecord', facilityId, record });
     }
+    for (const [facilityId, record] of this._pendingPanels) {
+      deltas.push({ type: 'setPanelRecord', facilityId, record });
+    }
     for (const [nodeKey, groups] of this._pendingPlacement) {
       deltas.push({ type: 'setLogicPlacement', nodeKey, groups });
     }
@@ -250,6 +262,7 @@ class FacilitiesStore {
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPanels = new Map();
   }
 
   /**
@@ -350,6 +363,32 @@ class FacilitiesStore {
   }
 
   /**
+   * Replace a facility's whole `panel` record (Spec 021). Same contract as
+   * `setBlockSignalsRecord`: folded into a pending creation, no-op
+   * suppression, and a revert to the saved record drops the staged entry.
+   */
+  setPanelRecord(facilityId: string, record: PanelRecord): boolean {
+    const effective = this.facilities.find((f) => f.facilityId === facilityId);
+    if (!effective) return false;
+    if (deepEqual(effective.panel, record)) return false;
+
+    const creationIdx = this._pendingCreations.findIndex((f) => f.facilityId === facilityId);
+    if (creationIdx >= 0) {
+      const next = this._pendingCreations.slice();
+      next[creationIdx] = { ...next[creationIdx], panel: record };
+      this._pendingCreations = next;
+      return true;
+    }
+
+    const baseline = this._baseline.find((f) => f.facilityId === facilityId);
+    const next = new Map(this._pendingPanels);
+    if (baseline && deepEqual(baseline.panel, record)) next.delete(facilityId);
+    else next.set(facilityId, record);
+    this._pendingPanels = next;
+    return true;
+  }
+
+  /**
    * Replace one board's whole Logic placement (Spec 020 / E3a). No-op
    * suppression (ADR-0012): equal to the effective placement → no draft;
    * equal to the saved placement → any staged replacement is dropped.
@@ -394,6 +433,11 @@ class FacilitiesStore {
       const next = new Map(this._pendingBlockSignals);
       next.delete(facilityId);
       this._pendingBlockSignals = next;
+    }
+    if (this._pendingPanels.has(facilityId)) {
+      const next = new Map(this._pendingPanels);
+      next.delete(facilityId);
+      this._pendingPanels = next;
     }
     // Mirror the backend's DeleteFacility: the facility's groups leave every board.
     for (const [nodeKey, groups] of this._pendingPlacement) {
@@ -506,6 +550,7 @@ class FacilitiesStore {
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPanels = new Map();
   }
 
   resetForNewLayout(): void {

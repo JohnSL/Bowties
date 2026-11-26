@@ -21,7 +21,9 @@ use super::compiler::{
     logic_function_path, logic_source_path, mast_link_address_path, mast_processing_path, track_circuit_link_path,
     EditValue, LogicAction, LogicFact, MastFact, NodeConfigEdit, NodeSlotFacts, TrackCircuitFact,
 };
+use crate::layout::channels::ChannelsDocument;
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind, FacilitiesDocument};
+use crate::panel::panel_lamp_rows;
 use crate::node_tree::{
     ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree,
 };
@@ -260,18 +262,27 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
 /// recorded Logic placement; nothing is stored flat.
 pub fn claimed_slots_from_facilities(
     doc: &FacilitiesDocument,
+    channels: &ChannelsDocument,
     exclude_facility_id: Option<&str>,
 ) -> Vec<ClaimedSlot> {
-    claimed_slots_where(doc, |id| Some(id) != exclude_facility_id)
+    claimed_slots_where(doc, channels, |id| Some(id) != exclude_facility_id)
 }
 
-/// The slots one facility occupies (its signals' masts and placed Logic): the
+/// The slots one facility occupies (its signals' masts, placed Logic and panel lamp rows): the
 /// release targets of removing it.
-pub fn facility_claimed_slots(doc: &FacilitiesDocument, facility_id: &str) -> Vec<ClaimedSlot> {
-    claimed_slots_where(doc, |id| id == facility_id)
+pub fn facility_claimed_slots(
+    doc: &FacilitiesDocument,
+    channels: &ChannelsDocument,
+    facility_id: &str,
+) -> Vec<ClaimedSlot> {
+    claimed_slots_where(doc, channels, |id| id == facility_id)
 }
 
-fn claimed_slots_where(doc: &FacilitiesDocument, include: impl Fn(&str) -> bool) -> Vec<ClaimedSlot> {
+fn claimed_slots_where(
+    doc: &FacilitiesDocument,
+    channels: &ChannelsDocument,
+    include: impl Fn(&str) -> bool,
+) -> Vec<ClaimedSlot> {
     let masts = doc
         .facilities
         .iter()
@@ -308,7 +319,12 @@ fn claimed_slots_where(doc: &FacilitiesDocument, include: impl Fn(&str) -> bool)
                 index,
             })
         });
-    masts.chain(circuits).chain(logic).collect()
+    let lamps = doc.facilities.iter().filter(|f| include(&f.facility_id)).flat_map(|f| {
+        panel_lamp_rows(f, channels)
+            .into_iter()
+            .map(|(node_key, row)| ClaimedSlot { node_key, kind: ClaimedSlotKind::DirectLamp, index: row })
+    });
+    masts.chain(circuits).chain(logic).chain(lamps).collect()
 }
 
 /// Resolve compiled edits to memory locations. Unknown paths and edits whose
@@ -482,12 +498,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        let own = facility_claimed_slots(&doc, "mine");
+        let own = facility_claimed_slots(&doc, &ChannelsDocument::default(), "mine");
         assert_eq!(
             own.iter().map(|c| (c.kind, c.index)).collect::<Vec<_>>(),
             vec![(ClaimedSlotKind::Mast, 1), (ClaimedSlotKind::Logic, 5), (ClaimedSlotKind::Logic, 6)]
         );
-        let claimed = claimed_slots_from_facilities(&doc, Some("mine"));
+        let claimed = claimed_slots_from_facilities(&doc, &ChannelsDocument::default(), Some("mine"));
         let facts = node_slot_facts(NODE, &tree, &claimed);
         assert!(!facts.masts[0].in_use, "own facility's claim is excluded");
         assert!(facts.masts[1].in_use);
@@ -583,12 +599,12 @@ mod tests {
         let mut record = record_with_mast(1);
         record.signals[0].resources.track_circuits = vec![2, 4];
         let doc = FacilitiesDocument { facilities: vec![facility("mine", record)], ..Default::default() };
-        let own = facility_claimed_slots(&doc, "mine");
+        let own = facility_claimed_slots(&doc, &ChannelsDocument::default(), "mine");
         assert_eq!(
             own.iter().map(|c| (c.kind, c.index)).collect::<Vec<_>>(),
             vec![(ClaimedSlotKind::Mast, 1), (ClaimedSlotKind::TrackCircuit, 2), (ClaimedSlotKind::TrackCircuit, 4)]
         );
-        assert!(claimed_slots_from_facilities(&doc, Some("mine")).is_empty());
+        assert!(claimed_slots_from_facilities(&doc, &ChannelsDocument::default(), Some("mine")).is_empty());
     }
 
     #[test]
@@ -608,7 +624,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let targets: Vec<_> = facility_claimed_slots(&doc, "mine").iter().map(ReleaseTarget::from).collect();
+        let targets: Vec<_> = facility_claimed_slots(&doc, &ChannelsDocument::default(), "mine").iter().map(ReleaseTarget::from).collect();
         let tree = zeroed_tree();
         let released = release_slots(&targets, &[node_slot_facts(NODE, &tree, &[])]);
         assert_eq!(released.issues, vec![]);
@@ -863,6 +879,45 @@ mod tests {
             resources: SignalResources { node_key: NODE.into(), mast, track_circuits: vec![] },
         });
         record
+    }
+
+    fn lamp_channel(id: &str, node_key: &str, row_ordinal: u32) -> crate::layout::channels::InformationChannel {
+        use crate::layout::channels::{ChannelBinding, ChannelOwnership, ChannelRole, InformationChannel};
+        InformationChannel {
+            id: id.into(),
+            name: id.into(),
+            role: ChannelRole::LampIndicator,
+            style: "direct-lamp".into(),
+            ownership: ChannelOwnership::UserOwned,
+            binding: ChannelBinding::LampRow { node_key: node_key.into(), row_ordinal },
+        }
+    }
+
+    fn panel_with_lamps(id: &str, lamps: &[&str]) -> Facility {
+        let mut f: Facility = serde_json::from_value(serde_json::json!({
+            "facilityId": id, "name": id, "templateId": "panel", "slotBindings": {}
+        }))
+        .expect("facility");
+        f.slot_bindings.insert("lamps".into(), lamps.iter().map(|l| l.to_string()).collect());
+        f
+    }
+
+    #[test]
+    fn panel_lamp_rows_are_claimed_direct_lamp_slots_unless_that_panel_is_excluded() {
+        let channels = ChannelsDocument::new(vec![lamp_channel("l1", NODE, 3), lamp_channel("l2", NODE, 5)]);
+        let doc = FacilitiesDocument {
+            facilities: vec![panel_with_lamps("p1", &["l1"]), panel_with_lamps("p2", &["l2", "missing"])],
+            ..Default::default()
+        };
+        let all: Vec<_> =
+            claimed_slots_from_facilities(&doc, &channels, None).iter().map(|c| (c.kind, c.index)).collect();
+        assert_eq!(all, vec![(ClaimedSlotKind::DirectLamp, 3), (ClaimedSlotKind::DirectLamp, 5)]);
+        let others: Vec<_> =
+            claimed_slots_from_facilities(&doc, &channels, Some("p1")).iter().map(|c| c.index).collect();
+        assert_eq!(others, vec![5], "the excluded panel's own rows are not claims against itself");
+        let own = facility_claimed_slots(&doc, &channels, "p1");
+        assert_eq!(own.iter().map(|c| (c.kind, c.index)).collect::<Vec<_>>(), vec![(ClaimedSlotKind::DirectLamp, 3)]);
+        assert_eq!(own[0].node_key, NODE);
     }
 
     fn facility(id: &str, record: BlockSignalsRecord) -> Facility {

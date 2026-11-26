@@ -20,6 +20,10 @@
   import { blockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
   import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
   import { facilityDiagramsStore } from '$lib/stores/facilityDiagrams.svelte';
+  import PanelEditor from '$lib/components/Panel/PanelEditor.svelte';
+  import PanelCard from '$lib/components/Panel/PanelCard.svelte';
+  import { panelEditorStore } from '$lib/stores/panelEditor.svelte';
+  import { panelEditorActions } from '$lib/orchestration/panelEditorOrchestrator';
   import {
     blockSignalsEditorActions,
     startBlockSignalsEditor,
@@ -79,6 +83,7 @@
     untrack(() => void facilityDiagramOrchestrator.sync(facilities));
   });
   const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
+  const PANEL_TEMPLATE_ID = 'panel';
 
   // Shown in Add facility so people can see what's planned; it can't be chosen yet.
   const interlockingPlantChoice = {
@@ -94,12 +99,22 @@
   const FACILITY_DESCRIPTIONS: Record<string, string> = {
     'block-indicator': "A panel light that follows one block's occupancy.",
     'automatic-block-signals': 'Signals that respond to occupancy, the next signal, and hand-thrown turnouts.',
+    [PANEL_TEMPLATE_ID]: 'Lamps on a fascia or control panel that show which blocks are occupied.',
+  };
+
+  const FACILITY_EXAMPLES: Record<string, string> = {
+    [PANEL_TEMPLATE_ID]: 'Fascia mimic · dispatcher panel · helix or staging indicators',
   };
 
   const facilityChoices = $derived(
-    behaviorTemplatesStore.templates
-      .map((template) => ({ ...template, description: FACILITY_DESCRIPTIONS[template.templateId] }))
-      .concat(interlockingPlantChoice),
+    [
+      ...behaviorTemplatesStore.templates.map((template) => ({
+        ...template,
+        description: FACILITY_DESCRIPTIONS[template.templateId],
+        examples: FACILITY_EXAMPLES[template.templateId],
+      })),
+      interlockingPlantChoice,
+    ],
   );
 
   function templateFor(templateId: string): BehaviorTemplate | undefined {
@@ -109,6 +124,11 @@
   function handleAddConfirm(template: BehaviorTemplate, name: string) {
     if (template.templateId === BLOCK_SIGNALS_TEMPLATE_ID) {
       startBlockSignalsEditor(name);
+      showAddDialog = false;
+      return;
+    }
+    if (template.templateId === PANEL_TEMPLATE_ID) {
+      panelEditorActions.startPanelEditor(name);
       showAddDialog = false;
       return;
     }
@@ -160,6 +180,9 @@
     <ul class="facility-list">
       {#each facilitiesStore.facilities as facility (facility.facilityId)}
         <li>
+          {#if facility.templateId === PANEL_TEMPLATE_ID}
+            <PanelCard {facility} />
+          {:else}
           <FacilityCard
             {facility}
             template={templateFor(facility.templateId)}
@@ -174,6 +197,7 @@
             diagram={facilityDiagramsStore.get(facility.facilityId)}
             occupancy={blockOccupancy}
           />
+          {/if}
         </li>
       {/each}
     </ul>
@@ -196,6 +220,14 @@
       onConfirm={() => confirmRemoval(false)}
       onConfirmLeaveBoard={() => confirmRemoval(true)}
       onCancel={() => (removal = null)}
+    />
+  {/if}
+
+  {#if panelEditorStore.open}
+    <PanelEditor
+      view={panelEditorStore}
+      actions={panelEditorActions}
+      detectedBlocks={effectiveLayoutStore.detectedBlocks}
     />
   {/if}
 

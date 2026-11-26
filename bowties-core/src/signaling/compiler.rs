@@ -931,7 +931,7 @@ pub(crate) fn track_circuit_path(circuit: u32) -> String {
     format!("Track Circuits/Circuit[{circuit}]")
 }
 
-fn direct_lamp_path(lamp: u32) -> String {
+pub(crate) fn direct_lamp_path(lamp: u32) -> String {
     format!("Direct Lamp Control/Lamp[{lamp}]")
 }
 
@@ -1003,6 +1003,7 @@ impl From<&ClaimedSlot> for ReleaseTarget {
             ClaimedSlotKind::Mast => ReleaseSlot::Mast(claim.index),
             ClaimedSlotKind::Logic => ReleaseSlot::Logic(claim.index),
             ClaimedSlotKind::TrackCircuit => ReleaseSlot::TrackCircuit(claim.index),
+            ClaimedSlotKind::DirectLamp => ReleaseSlot::DirectLamp(claim.index),
         };
         Self { node_key: claim.node_key.clone(), slot }
     }

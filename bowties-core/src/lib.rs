@@ -9,6 +9,7 @@ pub mod bowtie;
 pub mod channel_events;
 pub mod facility_bowties;
 pub mod node_key;
+pub mod panel;
 pub mod layout;
 pub mod node_tree;
 pub mod node_proxy;

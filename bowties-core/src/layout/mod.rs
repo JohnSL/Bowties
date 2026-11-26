@@ -590,6 +590,7 @@ mod tests {
             name: "Block 5".to_string(),
             slot_bindings,
             block_signals: None,
+            panel: None,
         }]);
 
         let manifest = LayoutManifest::new(

@@ -90,6 +90,8 @@ export type LayoutEditDelta =
   | { type: 'addFacility'; facility: import('$lib/api/facilities').Facility }
   /** Replace a facility's whole `blockSignals` record (Spec 020 / E1a). */
   | { type: 'setBlockSignalsRecord'; facilityId: string; record: import('$lib/api/facilities').BlockSignalsRecord }
+  /** Replace a facility's whole `panel` record (Spec 021). */
+  | { type: 'setPanelRecord'; facilityId: string; record: import('$lib/api/facilities').PanelRecord }
   /** Replace one board's whole Logic placement; empty `groups` removes the board's entry (Spec 020 / E3a). */
   | { type: 'setLogicPlacement'; nodeKey: string; groups: import('$lib/api/facilities').PlacedLogicGroup[] }
   /** Rename a facility (Spec 018 / S1). */

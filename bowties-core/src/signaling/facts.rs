@@ -48,7 +48,7 @@ pub struct ReleaseOverlay {
 /// This is the one place releases take effect: pin owners, slot facts and the
 /// free-slot pick are all derived from `trees` afterwards. An owner is released
 /// only when named, and only when it is a mast or Direct Lamp row that is
-/// really in use and that no facility claims (`claimed` holds every
+/// really in use and that no facility (ABS mast or panel lamp row) claims (`claimed` holds every
 /// facility's slots, including the one being composed). Fresh event IDs the
 /// frontend will generate read as placeholders that match no real event.
 pub fn overlay_releases(
@@ -88,6 +88,11 @@ pub fn overlay_releases(
         };
         let problem = match request.owner {
             SignalOutputOwner::Mast(n) if claims.iter().any(|c| c.kind == ClaimedSlotKind::Mast && c.index == n) => {
+                Some("is owned by a facility and cannot be released here")
+            }
+            SignalOutputOwner::DirectLamp(n)
+                if claims.iter().any(|c| c.kind == ClaimedSlotKind::DirectLamp && c.index == n) =>
+            {
                 Some("is owned by a facility and cannot be released here")
             }
             SignalOutputOwner::Mast(n) if !nonzero(&mast_processing_path(n)) => Some("is not in use"),
@@ -581,5 +586,16 @@ mod tests {
             assert_eq!(overlay.issues[0].code, crate::signaling::compiler::CompileIssueCode::ReleaseInvalid);
             assert!(overlay.edits.is_empty());
         }
+    }
+    #[test]
+    fn releasing_a_panel_claimed_direct_lamp_is_a_blocking_issue_never_a_release() {
+        use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
+        let key = NodeKey::parse(NODE).unwrap();
+        let trees = HashMap::from([(key, leftover_tree())]);
+        let claimed = [ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::DirectLamp, index: 1 }];
+        let overlay = overlay_releases(trees, &release_of(SignalOutputOwner::DirectLamp(1)), &claimed);
+        assert_eq!(overlay.issues.len(), 1);
+        assert!(overlay.issues[0].detail.contains("owned by a facility and cannot be released here"));
+        assert!(overlay.edits.is_empty());
     }
 }

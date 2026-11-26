@@ -18,6 +18,7 @@ pub mod diagnostics;
 pub mod placeholder;
 pub mod node_key;
 pub mod signaling;
+pub mod panel;
 
 use menu::MenuHandles;
 
@@ -234,6 +235,26 @@ async fn compose_block_signals(
     signaling::compose::compose(state.inner(), request).await
 }
 
+/// Pin-level wiring facts of the Signal LCC boards for the Panel wizard.
+/// Read-only: owners come from the effective layout.
+#[tauri::command]
+async fn panel_wiring_facts(
+    state: tauri::State<'_, AppState>,
+    request: panel::PanelWiringFactsRequest,
+) -> Result<panel::PanelWiringFactsResponse, String> {
+    panel::wiring_facts(state.inner(), request).await
+}
+
+/// Compose the Direct Lamp Control edits for a panel's lamps. Read-only: the
+/// frontend stages the returned edits.
+#[tauri::command]
+async fn compose_panel(
+    state: tauri::State<'_, AppState>,
+    request: panel::ComposePanelRequest,
+) -> Result<panel::ComposePanelResponse, String> {
+    panel::compose(state.inner(), request).await
+}
+
 /// Disconnect from the LCC network
 #[tauri::command]
 async fn disconnect_lcc(
@@ -420,6 +441,8 @@ pub fn run() {
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
             preview_block_signals,
             compose_block_signals,
+            panel_wiring_facts,
+            compose_panel,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
             commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
             commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState

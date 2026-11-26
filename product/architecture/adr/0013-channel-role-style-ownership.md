@@ -128,3 +128,29 @@ no-op when equal, pending entry dropped when it returns to the saved binding).
 The channel ID, name and slot membership are unchanged. Rejected: deleting and
 recreating the channel, which runs delete-side cleanup on every rebind and
 makes correctness depend on delta order.
+
+## 2026-11-25 extension: panel lamps are Direct Lamp rows; the pin is the row's Lamp Selection
+
+From Spec 021, each wired entry of a **Panel** facility owns one persisted
+lamp-indicator channel (style `single-led-direct-lamp`, binding `lampRow`)
+in the facility's `lamps` slot. The panel record's entries reference lamp
+channels by ID; blocks are referenced from the record, not bound to a slot.
+Core rejects a panel whose entry lamp channel IDs differ from its `lamps`
+slot set, a channel on two entries, or a block on two entries.
+
+On a Signal LCC, Direct Lamp Control row *n* is not pin *n*: the row's
+Lamp Selection chooses the physical output. **The lamp's identity is its
+row; the pin it drives is that row's effective Lamp Selection**, read from
+configuration through the effective view. The panel compiler keeps a lamp's
+row, or allocates a free row (the row matching the pin when free, otherwise
+the lowest free row), and writes Lamp Selection, Lamp On, Lamp Off and Lamp
+Description on it. Moving a lamp to another pin on the same board changes
+only Lamp Selection; the channel is rebound only when the board changes.
+Every surface that shows a pin labels it from Lamp Selection, never from the
+row number.
+
+Rejected: row = pin (a row used outside Bowties for another pin would block a
+free pin, and Block Indicator lamps whose hand-set Lamp Selection differs
+from their row could not migrate without board writes); persisting the pin
+in the binding (a second source of truth beside Lamp Selection, and
+migration would need an unknown-pin state or a configuration read at load).

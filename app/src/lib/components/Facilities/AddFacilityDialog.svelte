@@ -15,7 +15,7 @@
   import FacilityTypeIcon from './FacilityTypeIcon.svelte';
 
   /** A facility type offered in the list, with an optional one-line description; an `unavailableNote` shows it disabled. */
-  type FacilityChoice = BehaviorTemplate & { description?: string; unavailableNote?: string };
+  type FacilityChoice = BehaviorTemplate & { description?: string; examples?: string; unavailableNote?: string };
 
   let {
     templates,
@@ -102,6 +102,9 @@
               <span class="af-template-name">{choice?.displayName ?? key}</span>
               {#if choice?.description}
                 <span class="af-template-desc">{choice.description}</span>
+              {/if}
+              {#if choice?.examples}
+                <span class="af-template-examples">{choice.examples}</span>
               {/if}
               {#if choice?.unavailableNote}
                 <span class="af-template-note">{choice.unavailableNote}</span>
@@ -206,6 +209,11 @@
     font-size: var(--fluent-fontSizeBase200);
     line-height: 1.35;
     color: var(--fluent-neutralForeground2);
+  }
+  .af-template-examples {
+    font-size: var(--fluent-fontSizeBase200);
+    font-style: italic;
+    color: var(--fluent-neutralForeground3);
   }
   .af-template-note {
     font-size: var(--fluent-fontSizeBase200);

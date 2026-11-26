@@ -39,6 +39,46 @@ pub struct Facility {
     /// before schema "2.0".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_signals: Option<BlockSignalsRecord>,
+    /// Panel intent (Spec 021). Absent for other templates and for
+    /// documents written before schema "3.0".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel: Option<PanelRecord>,
+}
+
+/// When a panel lamp is lit relative to its block's occupancy.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LitWhen {
+    /// Lit while the block is occupied (the default).
+    #[default]
+    Occupied,
+    /// Lit while the block is clear.
+    Clear,
+}
+
+/// Whole-record intent of a Panel facility. Replaced wholesale by
+/// `SetPanelRecord`; never patched field by field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelRecord {
+    #[serde(default)]
+    pub lit_when: LitWhen,
+    /// Entries in panel order.
+    pub entries: Vec<PanelEntry>,
+}
+
+/// One block of a panel and its optional lamp.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelEntry {
+    /// Stable within the panel; survives reorder and re-pointing.
+    pub entry_id: String,
+    pub block_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lamp_channel_id: Option<String>,
+    /// Per-entry override of the panel's `lit_when`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lit_when: Option<LitWhen>,
 }
 
 /// Whole-record intent of an Automatic Block Signals facility. Replaced
@@ -90,6 +130,8 @@ pub enum ClaimedSlotKind {
     Mast,
     Logic,
     TrackCircuit,
+    /// A Direct Lamp Control row claimed by a panel lamp.
+    DirectLamp,
 }
 
 /// A node slot (mast or Logic) occupied by a facility; derived, never stored.
@@ -144,7 +186,7 @@ pub(crate) fn canonical_node_key(key: &str) -> String {
 }
 
 impl FacilitiesDocument {
-    pub const SCHEMA_VERSION: &'static str = "2.0";
+    pub const SCHEMA_VERSION: &'static str = "3.0";
     pub const FILE_NAME: &'static str = "facilities.yaml";
 
     pub fn new(facilities: Vec<Facility>) -> Self {
@@ -180,6 +222,24 @@ pub enum FacilityApplyError {
         missing_from_slot: Vec<String>,
         /// Bound to the slot but not in the record.
         missing_from_record: Vec<String>,
+    },
+    /// A panel's entry lamp channels differ from its `lamps` slot set.
+    PanelLampMismatch {
+        facility_id: String,
+        /// On an entry but not bound to the slot.
+        missing_from_slot: Vec<String>,
+        /// Bound to the slot but on no entry.
+        missing_from_record: Vec<String>,
+    },
+    /// One lamp channel appears on two entries of a panel.
+    PanelDuplicateLamp {
+        facility_id: String,
+        channel_id: String,
+    },
+    /// One block appears on two entries of a panel.
+    PanelDuplicateBlock {
+        facility_id: String,
+        block_id: String,
     },
     /// The facility's template was not found in the registry.
     UnknownTemplate {
@@ -219,6 +279,31 @@ impl std::fmt::Display for FacilityApplyError {
                 f,
                 "facility {} blockSignals record and 'signals' slot disagree (record channels not in slot: {:?}; slot channels not in record: {:?})",
                 facility_id, missing_from_slot, missing_from_record
+            ),
+            Self::PanelLampMismatch {
+                facility_id,
+                missing_from_slot,
+                missing_from_record,
+            } => write!(
+                f,
+                "panel {} entry lamps and 'lamps' slot disagree (entry lamps not in slot: {:?}; slot channels not on an entry: {:?})",
+                facility_id, missing_from_slot, missing_from_record
+            ),
+            Self::PanelDuplicateLamp {
+                facility_id,
+                channel_id,
+            } => write!(
+                f,
+                "panel {} uses lamp channel {} on more than one entry",
+                facility_id, channel_id
+            ),
+            Self::PanelDuplicateBlock {
+                facility_id,
+                block_id,
+            } => write!(
+                f,
+                "panel {} lists block {} on more than one entry",
+                facility_id, block_id
             ),
             Self::UnknownTemplate {
                 facility_id,
@@ -298,6 +383,46 @@ pub fn check_block_signals_agreement(facility: &Facility) -> Result<(), Facility
         facility_id: facility.facility_id.clone(),
         missing_from_slot: in_record.difference(&in_slot).map(|s| s.to_string()).collect(),
         missing_from_record: in_slot.difference(&in_record).map(|s| s.to_string()).collect(),
+    })
+}
+
+/// A panel's entry lamp channels must equal its `lamps` slot set, no lamp
+/// channel may sit on two entries, and block ids are unique within the
+/// panel (Spec 021). A violation is an explicit error, never a silent drop.
+pub fn check_panel_agreement(facility: &Facility) -> Result<(), FacilityApplyError> {
+    let Some(record) = &facility.panel else {
+        return Ok(());
+    };
+    let mut blocks = std::collections::BTreeSet::<&String>::new();
+    let mut lamps = std::collections::BTreeSet::<&String>::new();
+    for entry in &record.entries {
+        if !blocks.insert(&entry.block_id) {
+            return Err(FacilityApplyError::PanelDuplicateBlock {
+                facility_id: facility.facility_id.clone(),
+                block_id: entry.block_id.clone(),
+            });
+        }
+        if let Some(channel_id) = &entry.lamp_channel_id {
+            if !lamps.insert(channel_id) {
+                return Err(FacilityApplyError::PanelDuplicateLamp {
+                    facility_id: facility.facility_id.clone(),
+                    channel_id: channel_id.clone(),
+                });
+            }
+        }
+    }
+    let in_slot: std::collections::BTreeSet<&String> = facility
+        .slot_bindings
+        .get("lamps")
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    if lamps == in_slot {
+        return Ok(());
+    }
+    Err(FacilityApplyError::PanelLampMismatch {
+        facility_id: facility.facility_id.clone(),
+        missing_from_slot: lamps.difference(&in_slot).map(|s| s.to_string()).collect(),
+        missing_from_record: in_slot.difference(&lamps).map(|s| s.to_string()).collect(),
     })
 }
 
@@ -445,6 +570,17 @@ pub fn apply_facility_deltas(
                 facility.block_signals = Some(record.clone());
                 touched = true;
             }
+            LayoutEditDelta::SetPanelRecord { facility_id, record } => {
+                let facility = doc
+                    .facilities
+                    .iter_mut()
+                    .find(|f| &f.facility_id == facility_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownFacility {
+                        facility_id: facility_id.clone(),
+                    })?;
+                facility.panel = Some(record.clone());
+                touched = true;
+            }
             LayoutEditDelta::SetLogicPlacement { node_key, groups } => {
                 let canonical = canonical_node_key(node_key);
                 let existing = doc
@@ -477,6 +613,7 @@ pub fn apply_facility_deltas(
     }
     for facility in &doc.facilities {
         check_block_signals_agreement(facility)?;
+        check_panel_agreement(facility)?;
     }
     if touched {
         doc.schema_version = FacilitiesDocument::SCHEMA_VERSION.to_string();
@@ -498,6 +635,7 @@ mod tests {
             name: name.to_string(),
             slot_bindings,
             block_signals: None,
+            panel: None,
         }
     }
 
@@ -512,7 +650,7 @@ mod tests {
         let yaml = serde_yaml_ng::to_string(&doc).unwrap();
         let parsed: FacilitiesDocument = serde_yaml_ng::from_str(&yaml).unwrap();
 
-        assert_eq!(parsed.schema_version, "2.0");
+        assert_eq!(parsed.schema_version, "3.0");
         assert_eq!(parsed.facilities.len(), 1);
         assert_eq!(parsed.facilities[0], facility);
     }
@@ -600,7 +738,7 @@ mod tests {
             &[LayoutEditDelta::AddFacility { facility: f.clone() }],
         )
         .unwrap();
-        assert_eq!(doc.schema_version, "2.0");
+        assert_eq!(doc.schema_version, "3.0");
         assert_eq!(doc.facilities, vec![f]);
     }
 
@@ -613,7 +751,7 @@ facilities: []
         assert_eq!(doc.schema_version, "1.0");
         let f = block_indicator_with_empty_slots("id-1", "Block 5");
         apply_facility_deltas(&mut doc, &[LayoutEditDelta::AddFacility { facility: f }]).unwrap();
-        assert_eq!(doc.schema_version, "2.0");
+        assert_eq!(doc.schema_version, "3.0");
     }
 
     #[test]
@@ -1042,6 +1180,7 @@ facilities: []
                     .unwrap_or_default(),
             )]),
             block_signals: record,
+            panel: None,
         }
     }
 
@@ -1185,6 +1324,171 @@ facilities:
             ],
         )
         .unwrap();
+    }
+
+    // -- panel record (Spec 021) -----------------------------------------------
+
+    fn panel_facility(id: &str) -> Facility {
+        let mut slot_bindings = BTreeMap::new();
+        slot_bindings.insert("lamps".to_string(), Vec::<String>::new());
+        Facility {
+            facility_id: id.to_string(),
+            template_id: "panel".to_string(),
+            name: "Panel".to_string(),
+            slot_bindings,
+            block_signals: None,
+            panel: None,
+        }
+    }
+
+    fn entry(entry_id: &str, block_id: &str, lamp: Option<&str>) -> PanelEntry {
+        PanelEntry {
+            entry_id: entry_id.to_string(),
+            block_id: block_id.to_string(),
+            lamp_channel_id: lamp.map(str::to_string),
+            lit_when: None,
+        }
+    }
+
+    fn panel_record(entries: Vec<PanelEntry>) -> PanelRecord {
+        PanelRecord { lit_when: LitWhen::Occupied, entries }
+    }
+
+    fn set_panel(id: &str, record: PanelRecord) -> LayoutEditDelta {
+        LayoutEditDelta::SetPanelRecord { facility_id: id.to_string(), record }
+    }
+
+    fn attach_lamp(id: &str, ch: &str) -> LayoutEditDelta {
+        LayoutEditDelta::AttachChannelToSlot {
+            facility_id: id.to_string(),
+            slot_label: "lamps".to_string(),
+            channel_id: ch.to_string(),
+        }
+    }
+
+    #[test]
+    fn set_panel_record_replaces_the_record_wholesale() {
+        let mut doc = FacilitiesDocument::new(vec![panel_facility("p-1")]);
+        apply_facility_deltas(
+            &mut doc,
+            &[set_panel("p-1", panel_record(vec![entry("e1", "blk-a", None)]))],
+        )
+        .unwrap();
+        let replacement = panel_record(vec![entry("e2", "blk-b", None), entry("e3", "blk-c", None)]);
+        apply_facility_deltas(&mut doc, &[set_panel("p-1", replacement.clone())]).unwrap();
+        assert_eq!(doc.facilities[0].panel, Some(replacement));
+    }
+
+    #[test]
+    fn panel_record_wire_form_is_camel_case_and_skips_absent_options() {
+        let record = PanelRecord {
+            lit_when: LitWhen::Clear,
+            entries: vec![
+                PanelEntry {
+                    entry_id: "e1".to_string(),
+                    block_id: "blk-a".to_string(),
+                    lamp_channel_id: Some("ch-a".to_string()),
+                    lit_when: Some(LitWhen::Occupied),
+                },
+                entry("e2", "blk-b", None),
+            ],
+        };
+        let yaml = serde_yaml_ng::to_string(&record).unwrap();
+        assert!(yaml.contains("litWhen: clear"), "{yaml}");
+        assert!(yaml.contains("lampChannelId: ch-a"), "{yaml}");
+        assert!(yaml.contains("blockId: blk-b"), "{yaml}");
+        let parsed: PanelRecord = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed, record);
+        assert_eq!(yaml.matches("lampChannelId").count(), 1, "{yaml}");
+        let doc = FacilitiesDocument::new(vec![panel_facility("p-1")]);
+        assert!(!serde_yaml_ng::to_string(&doc).unwrap().contains("panel:"));
+    }
+
+    #[test]
+    fn panel_record_lamp_channels_must_equal_lamps_slot_set() {
+        let mut doc = FacilitiesDocument::new(vec![panel_facility("p-1")]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[
+                set_panel("p-1", panel_record(vec![entry("e1", "blk-a", Some("ch-a"))])),
+                attach_lamp("p-1", "ch-z"),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, FacilityApplyError::PanelLampMismatch { facility_id, .. } if facility_id == "p-1"),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("ch-a") && err.to_string().contains("ch-z"), "{err}");
+    }
+
+    #[test]
+    fn panel_lamp_channel_on_two_entries_is_rejected() {
+        let mut doc = FacilitiesDocument::new(vec![panel_facility("p-1")]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[
+                attach_lamp("p-1", "ch-a"),
+                set_panel(
+                    "p-1",
+                    panel_record(vec![
+                        entry("e1", "blk-a", Some("ch-a")),
+                        entry("e2", "blk-b", Some("ch-a")),
+                    ]),
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            FacilityApplyError::PanelDuplicateLamp {
+                facility_id: "p-1".to_string(),
+                channel_id: "ch-a".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn panel_block_on_two_entries_is_rejected() {
+        let mut doc = FacilitiesDocument::new(vec![panel_facility("p-1")]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[set_panel(
+                "p-1",
+                panel_record(vec![entry("e1", "blk-a", None), entry("e2", "blk-a", None)]),
+            )],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            FacilityApplyError::PanelDuplicateBlock {
+                facility_id: "p-1".to_string(),
+                block_id: "blk-a".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn add_facility_attach_and_set_panel_record_in_one_batch_is_accepted() {
+        let mut doc = FacilitiesDocument::default();
+        apply_facility_deltas(
+            &mut doc,
+            &[
+                LayoutEditDelta::AddFacility { facility: panel_facility("p-1") },
+                attach_lamp("p-1", "ch-a"),
+                attach_lamp("p-1", "ch-b"),
+                set_panel(
+                    "p-1",
+                    panel_record(vec![
+                        entry("e1", "blk-a", Some("ch-a")),
+                        entry("e2", "blk-b", Some("ch-b")),
+                        entry("e3", "blk-c", None),
+                    ]),
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(doc.facilities[0].panel.as_ref().unwrap().entries.len(), 3);
     }
 
     // -- Board Logic placement (Spec 020 / E3a) -------------------------------

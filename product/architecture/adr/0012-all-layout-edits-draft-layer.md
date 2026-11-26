@@ -443,3 +443,31 @@ claimed slots ... never a re-pick" (2026-11-22) and the facility's persisted
   signals' masts plus every slot of its placed Logic groups
   (`slots::facility_claimed_slots`). `release_slots` stays the one release
   path.
+
+## 2026-11-25 extension: panels claim Direct Lamp rows; one staging transaction across facility kinds
+
+Spec 021 S1 adds the **Panel** facility, a second compiled-intent kind.
+
+- **Direct Lamp rows become claimable.** A panel claims each Direct Lamp
+  Control row bound to a lamp channel in its `lamps` slot
+  (`ClaimedSlotKind::DirectLamp`, index = row). The claim is still derived,
+  never stored: `claimed_slots_where(facilities, channels, …)` reads the
+  facilities and channels documents together, so ABS compose, release,
+  attribution and the panel compiler see one complete list. This supersedes
+  the 2026-11-23 line "the facility claims no Direct Lamp rows", which stays
+  true for Automatic Block Signals only. `overlay_releases` refuses a named
+  release of a claimed Direct Lamp row the same way it refuses a claimed
+  mast, so ABS cannot take a panel pin and the reverse. Rejected: a separate
+  panel-claims list that each caller unions with the ABS list (a second
+  owner map that any caller could forget).
+- **One staging transaction for every compiled-facility kind.** The
+  2026-11-22 "one staging pipeline" rule now spans facility kinds.
+  `facilityOrchestrator` runs a private transaction: sync drafts → compose →
+  refuse with nothing staged on issues → wrapped store mutations that record
+  their own inverse when staged → non-throwing post-commit deletes. Any throw
+  replays the inverses in reverse. ABS create, update and remove, and Panel
+  create, use it; each kind supplies only its typed pieces (channel plan,
+  record setter, ABS Logic placement phase). Extracting it closed a leak in
+  the hand-written ABS rollback: an update that added a signal removed the
+  new channel on failure but left it attached. Rejected: a parallel
+  `stagePanelFacility` with its own rollback list.

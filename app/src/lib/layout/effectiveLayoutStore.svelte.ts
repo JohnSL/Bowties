@@ -214,11 +214,25 @@ class EffectiveLayoutStore {
     });
   }
 
-  /** Named hardware-detected blocks available to the transient S1 editor. */
-  get detectedBlocks(): Array<{ blockId: string; name: string }> {
+  /**
+   * Named hardware-detected blocks available to the block-list editors, each with
+   * its detector board and the Automatic Block Signals facility that lists it.
+   */
+  get detectedBlocks(): Array<{ blockId: string; name: string; board: string; facility?: string }> {
+    const facilityByBlock = new Map<string, string>();
+    for (const facility of facilitiesStore.facilities) {
+      for (const block of facility.blockSignals?.blocks ?? []) {
+        if (!facilityByBlock.has(block.blockId)) facilityByBlock.set(block.blockId, facility.name);
+      }
+    }
     return channelsStore.channels
       .filter((channel) => channel.role === 'block-occupancy')
-      .map((channel) => ({ blockId: channel.id, name: channel.name }));
+      .map((channel) => ({
+        blockId: channel.id,
+        name: channel.name,
+        board: resolveNodeNameForKey(channel.binding.nodeKey),
+        facility: facilityByBlock.get(channel.id),
+      }));
   }
 
   /**
@@ -312,6 +326,18 @@ class EffectiveLayoutStore {
       if (bound < slot.minChannels) return 'Incomplete';
     }
     return 'Wired';
+  }
+
+  /**
+   * Spec 021 / S1 — Panel card status. `Empty` when the panel lists no blocks,
+   * `Incomplete` while some entries still lack a lamp (`needsLamp` counts them),
+   * `Wired` once every entry has one.
+   */
+  panelStatus(facilityId: string): { status: 'Empty' | 'Incomplete' | 'Wired'; needsLamp: number } {
+    const entries = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)?.panel?.entries ?? [];
+    if (entries.length === 0) return { status: 'Empty', needsLamp: 0 };
+    const needsLamp = entries.filter((entry) => !entry.lampChannelId).length;
+    return { status: needsLamp > 0 ? 'Incomplete' : 'Wired', needsLamp };
   }
 
   /**

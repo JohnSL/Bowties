@@ -173,3 +173,13 @@ Rules:
   one. An older document must still deserialize with serde defaults.
 - Tests cover a newer version rejected and the oldest supported version
   opening.
+
+## 2026-11-25 extension: manifest version 6
+
+Spec 021 S1 adds the optional `panel` record to facilities and the
+`SetPanelRecord` delta. Under the version policy above, `LAYOUT_SCHEMA_VERSION`
+becomes 6 and the facilities document `schemaVersion` becomes "3.0". Versions
+4 to 6 open; 7 is refused with the "newer Bowties" message. Older facilities
+files ("1.0", "2.0") still deserialize; the reader checks only the manifest.
+Guarded by `bowties-core/tests/panel_layout_roundtrip.rs` and the manifest
+unit tests.

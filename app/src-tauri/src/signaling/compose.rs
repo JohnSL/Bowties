@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 
 use bowties_core::{
-    layout::{channels::ChannelRole, facilities::NodeLogicPlacement, state::LayoutState},
+    layout::{facilities::NodeLogicPlacement, state::LayoutState},
     node_key::NodeKey,
-    node_tree::{parse_event_id_hex, NodeConfigTree},
+    node_tree::NodeConfigTree,
     profile::StructureProfile,
     signaling::{
         compiler::{
@@ -25,7 +25,7 @@ use bowties_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{proposal_facts_from_layout, resolved_detection_events, saved_signals_from_layout};
+use super::{occupancy_events, proposal_facts_from_layout, saved_signals_from_layout};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,7 +88,11 @@ fn compose_from_layout(
     // Named releases are applied inside the facts, so the pin owners, slot
     // facts and free-slot pick below all see the released configuration.
     let facts = proposal_facts_from_layout(layout, profiles, &request.release);
-    let claimed = claimed_slots_from_facilities(layout.effective_facilities(), request.facility_id.as_deref());
+    let claimed = claimed_slots_from_facilities(
+        layout.effective_facilities(),
+        layout.effective_channels(),
+        request.facility_id.as_deref(),
+    );
     // Recompiling a saved facility: each signal keeps its mast, and the board's
     // planner keeps the facility's Logic groups where they are.
     let saved_resources: Vec<PlannedSignalResources> = request
@@ -105,21 +109,8 @@ fn compose_from_layout(
         })
         .unwrap_or_default();
 
-    let mut occupancy = Vec::new();
-    for block in &request.line.blocks {
-        let events = facts
-            .channels
-            .iter()
-            .find(|c| c.id == block.block_id && c.role == ChannelRole::BlockOccupancy)
-            .map(|channel| resolved_detection_events(&facts, channel))
-            .unwrap_or_default();
-        let event = |state: &str| events.get(state).and_then(|hex| parse_event_id_hex(hex));
-        occupancy.push(BlockOccupancyEvents {
-            block_id: block.block_id.clone(),
-            occupied: event("occupied"),
-            clear: event("clear"),
-        });
-    }
+    let occupancy: Vec<BlockOccupancyEvents> =
+        request.line.blocks.iter().map(|block| occupancy_events(&facts, &block.block_id)).collect();
 
     let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
     // A release's edits and a dropped signal's resets must resolve too, so
@@ -186,7 +177,7 @@ fn release_from_layout(
         .find(|f| f.facility_id == facility_id)
         .and_then(|f| f.block_signals.as_ref())
         .ok_or_else(|| format!("No Automatic Block Signals facility '{facility_id}' is saved."))?;
-    let claims = facility_claimed_slots(doc, facility_id);
+    let claims = facility_claimed_slots(doc, layout.effective_channels(), facility_id);
     let facts = proposal_facts_from_layout(layout, profiles, &[]);
 
     let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
@@ -221,4 +212,39 @@ fn release_from_layout(
         logic_placement,
         issues: released.issues,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::panel::fixtures::*;
+    use bowties_core::signaling::SignalOutputOwner;
+
+    #[test]
+    fn a_direct_lamp_row_held_by_a_panel_is_facility_owned_and_cannot_be_released_by_abs() {
+        let mut tree = signal_lcc_tree();
+        set_int(&mut tree, "Direct Lamp Control/Lamp[2]/Lamp Selection", 3);
+        let layout = layout(tree, vec![lamp_channel("lamp-2", 2)], vec![panel_facility("pnl-1", "Yard Panel", &["lamp-2"])]);
+        let release = vec![ReleaseRequest { node_key: BOARD.into(), owner: SignalOutputOwner::DirectLamp(2) }];
+
+        let facts = proposal_facts_from_layout(&layout, &profiles(), &release);
+        let host = &facts.hardware.hosts[0];
+        assert_eq!(host.outputs[2].facility.as_ref().map(|f| f.facility_id.as_str()), Some("pnl-1"));
+
+        let out = compose_from_layout(
+            &layout,
+            &profiles(),
+            ComposeBlockSignalsRequest {
+                facility_id: Some("abs-new".into()),
+                remove: false,
+                line: Default::default(),
+                wiring: vec![],
+                release,
+            },
+        )
+        .unwrap();
+        assert_eq!(out.issues.len(), 1, "{:?}", out.issues);
+        assert!(out.issues[0].detail.contains("owned by a facility and cannot be released here"));
+        assert!(out.edits.is_empty());
+    }
 }

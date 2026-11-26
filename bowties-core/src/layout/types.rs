@@ -248,6 +248,13 @@ pub enum LayoutEditDelta {
         facility_id: String,
         record: crate::layout::facilities::BlockSignalsRecord,
     },
+    /// Replace a Panel facility's whole `panel` record (Spec 021). Errors on
+    /// an unknown facility id.
+    #[serde(rename_all = "camelCase")]
+    SetPanelRecord {
+        facility_id: String,
+        record: crate::layout::facilities::PanelRecord,
+    },
     /// Replace one board's whole Logic placement (Spec 020 / E3a). Empty
     /// `groups` removes the board's entry; an equal placement is a no-op.
     #[serde(rename_all = "camelCase")]
@@ -430,6 +437,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             }
             LayoutEditDelta::AddFacility { .. }
             | LayoutEditDelta::SetBlockSignalsRecord { .. }
+            | LayoutEditDelta::SetPanelRecord { .. }
             | LayoutEditDelta::SetLogicPlacement { .. }
             | LayoutEditDelta::RenameFacility { .. }
             | LayoutEditDelta::DeleteFacility { .. }

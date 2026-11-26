@@ -6,7 +6,14 @@
   let { templateId }: { templateId: string } = $props();
 </script>
 
-{#if templateId === 'block-indicator'}
+{#if templateId === 'panel'}
+  <svg class="facility-type-icon" viewBox="0 0 56 42" aria-hidden="true">
+    <rect x="4" y="6" width="48" height="30" rx="3" fill="#2b3a2f" />
+    <circle cx="16" cy="21" r="4" fill="#ffb900" />
+    <circle cx="28" cy="21" r="4" fill="#3b3f45" stroke="#888" />
+    <circle cx="40" cy="21" r="4" fill="#ffb900" />
+  </svg>
+{:else if templateId === 'block-indicator'}
   <svg class="facility-type-icon" viewBox="0 0 56 42" aria-hidden="true">
     <line x1="3" y1="21" x2="21" y2="21" stroke="#56606d" stroke-width="2" />
     <line x1="35" y1="21" x2="53" y2="21" stroke="#56606d" stroke-width="2" />

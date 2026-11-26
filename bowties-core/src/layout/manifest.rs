@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::types::ConnectionConfig;
 
-pub const LAYOUT_SCHEMA_VERSION: u32 = 5;
+pub const LAYOUT_SCHEMA_VERSION: u32 = 6;
 /// Oldest manifest version this build still opens (ADR-0005 version policy).
 pub const OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION: u32 = 4;
 
@@ -186,11 +186,12 @@ mod tests {
             .is_ok());
         assert!(manifest_with_version(4).validate().is_ok());
         assert!(manifest_with_version(5).validate().is_ok());
+        assert!(manifest_with_version(6).validate().is_ok());
     }
 
     #[test]
     fn validate_rejects_newer_version_with_newer_bowties_message() {
-        let err = manifest_with_version(6).validate().unwrap_err();
+        let err = manifest_with_version(7).validate().unwrap_err();
         assert!(err.contains("newer version of Bowties"), "{err}");
     }
 
@@ -201,11 +202,11 @@ mod tests {
     }
 
     #[test]
-    fn new_manifests_and_saves_write_version_five() {
-        let m = manifest_with_version(5);
-        assert_eq!(LayoutManifest::new("a".into(), "t".into(), "t".into()).schema_version, 5);
+    fn new_manifests_and_saves_write_version_six() {
+        let m = manifest_with_version(6);
+        assert_eq!(LayoutManifest::new("a".into(), "t".into(), "t".into()).schema_version, 6);
         let saved = build_save_manifest(Some(&manifest_with_version(4)), "a".into(), "t".into(), "t".into());
-        assert_eq!(saved.schema_version, 5);
+        assert_eq!(saved.schema_version, 6);
         assert_eq!(m.schema_version, LAYOUT_SCHEMA_VERSION);
     }
 }

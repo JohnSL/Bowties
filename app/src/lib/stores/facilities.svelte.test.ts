@@ -382,3 +382,73 @@ describe('Spec 020 / E3a: board Logic placement', () => {
     expect(facilitiesStore.editCount).toBe(1);
   });
 });
+
+import type { PanelRecord } from '$lib/api/facilities';
+
+const PANEL_TEMPLATE: BehaviorTemplate = {
+  templateId: 'panel',
+  displayName: 'Panel',
+  slots: [
+    { label: 'lamps', displayLabel: 'lamps', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: null },
+  ],
+  mapping: [],
+};
+
+function panelRecord(blockId = 'b-1'): PanelRecord {
+  return { litWhen: 'occupied', entries: [{ entryId: 'e-1', blockId, lampChannelId: 'ch-1' }] };
+}
+
+describe('Spec 021: facility panel record', () => {
+  it('folds the record into a pending creation so one addFacility delta carries record and lamp bindings', () => {
+    facilitiesStore.addFacility(PANEL_TEMPLATE, 'Panel 1', 'p-1');
+    expect(facilitiesStore.setPanelRecord('p-1', panelRecord())).toBe(true);
+    facilitiesStore.attachChannel('p-1', 'lamps', 'ch-1');
+
+    expect(facilitiesStore.facilities[0].panel).toEqual(panelRecord());
+    const deltas = facilitiesStore.collectDeltas();
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      type: 'addFacility',
+      facility: { facilityId: 'p-1', panel: panelRecord(), slotBindings: { lamps: ['ch-1'] } },
+    });
+  });
+
+  it('replaces a saved record wholesale, suppresses no-ops, and clears on revert, discard and hydrate', () => {
+    const saved = panelRecord();
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'p-2', templateId: 'panel', name: 'Panel 2', slotBindings: { lamps: ['ch-1'] }, panel: saved },
+    ]);
+    expect(facilitiesStore.setPanelRecord('p-2', panelRecord())).toBe(false);
+    expect(facilitiesStore.isDirty).toBe(false);
+
+    const changed = panelRecord('b-9');
+    expect(facilitiesStore.setPanelRecord('p-2', changed)).toBe(true);
+    expect(facilitiesStore.isDirty).toBe(true);
+    expect(facilitiesStore.editCount).toBe(1);
+    expect(facilitiesStore.facilities[0].panel).toEqual(changed);
+    expect(facilitiesStore.collectDeltas()).toEqual([
+      { type: 'setPanelRecord', facilityId: 'p-2', record: changed },
+    ]);
+
+    expect(facilitiesStore.setPanelRecord('p-2', saved)).toBe(true);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+
+    facilitiesStore.setPanelRecord('p-2', changed);
+    facilitiesStore.discard();
+    expect(facilitiesStore.isDirty).toBe(false);
+    expect(facilitiesStore.facilities[0].panel).toEqual(saved);
+
+    facilitiesStore.setPanelRecord('p-2', changed);
+    facilitiesStore.hydrateBaseline([]);
+    expect(facilitiesStore.isDirty).toBe(false);
+  });
+
+  it('drops a deleted facility staged record', () => {
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'p-3', templateId: 'panel', name: 'Panel 3', slotBindings: { lamps: [] }, panel: panelRecord() },
+    ]);
+    facilitiesStore.setPanelRecord('p-3', panelRecord('b-2'));
+    facilitiesStore.deleteFacility('p-3');
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'p-3' }]);
+  });
+});

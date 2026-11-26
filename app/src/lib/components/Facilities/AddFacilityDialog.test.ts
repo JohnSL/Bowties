@@ -120,6 +120,30 @@ describe('AddFacilityDialog', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
+  it('offers Panel with its description and examples, and confirming a name emits it', async () => {
+    render(AddFacilityDialog, {
+      props: {
+        templates: [
+          {
+            ...tmpl('panel', 'Panel'),
+            description: 'Lamps on a fascia or control panel that show which blocks are occupied.',
+            examples: 'Fascia mimic · dispatcher panel · helix or staging indicators',
+          },
+          tmpl('block-indicator', 'Block Indicator'),
+        ],
+        onConfirm,
+        onCancel,
+      },
+    });
+    expect(screen.getByText('Panel')).toBeInTheDocument();
+    expect(screen.getByText(/Lamps on a fascia or control panel/)).toBeInTheDocument();
+    expect(screen.getByText('Fascia mimic · dispatcher panel · helix or staging indicators')).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByPlaceholderText('e.g. Block 5'), { target: { value: 'Eagle Creek fascia' } });
+    await fireEvent.click(screen.getByRole('button', { name: /add facility/i }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ templateId: 'panel' }), 'Eagle Creek fascia');
+  });
+
   it('shows an unavailable facility type disabled, with its note, and never selects it', async () => {
     render(AddFacilityDialog, {
       props: {

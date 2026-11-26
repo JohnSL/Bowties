@@ -74,6 +74,7 @@ fn abs_facility() -> Facility {
                 },
             }],
         }),
+        panel: None,
     }
 }
 
@@ -138,13 +139,13 @@ fn offline_save_and_reopen_preserves_block_signals_facility() {
     write_layout_capture(&dir, &data).unwrap();
 
     let manifest_yaml = std::fs::read_to_string(dir.join("manifest.yaml")).unwrap();
-    assert!(manifest_yaml.contains("schemaVersion: 5"), "{manifest_yaml}");
+    assert!(manifest_yaml.contains("schemaVersion: 6"), "{manifest_yaml}");
     let facilities_yaml = std::fs::read_to_string(dir.join("facilities.yaml")).unwrap();
     assert!(facilities_yaml.contains("blockSignals:"), "{facilities_yaml}");
 
     let read = read_layout_capture(&dir).unwrap();
-    assert_eq!(read.manifest.schema_version, 5);
-    assert_eq!(read.facilities.schema_version, "2.0");
+    assert_eq!(read.manifest.schema_version, 6);
+    assert_eq!(read.facilities.schema_version, "3.0");
     assert_eq!(read.facilities.facilities, vec![abs_facility()]);
     let record = read.facilities.facilities[0].block_signals.as_ref().unwrap();
     assert_eq!(record.signals[0].channel_id, "ch-sig-1");
@@ -197,12 +198,12 @@ fn v4_layout_opens_and_facilities_without_block_signals_load_unchanged() {
 }
 
 #[test]
-fn schema_version_6_is_refused_with_newer_bowties_message_on_open() {
+fn schema_version_7_is_refused_with_newer_bowties_message_on_open() {
     let dir = temp_dir("v6").join("layout");
     write_v4_layout(&dir);
     let m = std::fs::read_to_string(dir.join("manifest.yaml"))
         .unwrap()
-        .replace("schemaVersion: 4", "schemaVersion: 6");
+        .replace("schemaVersion: 4", "schemaVersion: 7");
     std::fs::write(dir.join("manifest.yaml"), m).unwrap();
     let err = read_layout_capture(&dir).unwrap_err();
     assert!(err.contains("newer version of Bowties"), "{err}");
@@ -241,13 +242,13 @@ fn applying_a_facility_to_a_v1_document_saves_it_as_current_schema_version() {
     let dir = temp_dir("v1_apply").join("layout");
     write_layout_capture(&dir, &data_with_facilities(facilities)).unwrap();
     let yaml = std::fs::read_to_string(dir.join("facilities.yaml")).unwrap();
-    assert!(yaml.contains("schemaVersion: '2.0'") || yaml.contains("schemaVersion: \"2.0\""), "{yaml}");
-    assert_eq!(read_layout_capture(&dir).unwrap().facilities.schema_version, "2.0");
+    assert!(yaml.contains("schemaVersion: '3.0'") || yaml.contains("schemaVersion: \"3.0\""), "{yaml}");
+    assert_eq!(read_layout_capture(&dir).unwrap().facilities.schema_version, "3.0");
 }
 
 #[test]
 fn saving_an_untouched_v1_facilities_document_stamps_current_schema_version() {
     let dir = temp_dir("v1_untouched").join("layout");
     write_layout_capture(&dir, &data_with_facilities(v1_facilities_document())).unwrap();
-    assert_eq!(read_layout_capture(&dir).unwrap().facilities.schema_version, "2.0");
+    assert_eq!(read_layout_capture(&dir).unwrap().facilities.schema_version, "3.0");
 }

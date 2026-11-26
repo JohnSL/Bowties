@@ -45,6 +45,7 @@ import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
 import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
 import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
 import { blockSignalsEditorOrchestrator } from '$lib/orchestration/blockSignalsEditorOrchestrator';
+import { panelEditorOrchestrator } from '$lib/orchestration/panelEditorOrchestrator';
 import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
@@ -87,6 +88,7 @@ export const layoutScopedParticipants: LayoutScopedParticipant[] = [
   connectorSlotFocusStore,
   eventStateStore,
   blockSignalsEditorOrchestrator,
+  panelEditorOrchestrator,
   facilityDiagramOrchestrator,
   configReadStatusParticipant,
 ];

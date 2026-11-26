@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel facility mockup</title>
+<style>
+  :root {
+    --bg-app: #f5f5f5;
+    --bg-panel: #ffffff;
+    --bg-subtle: #fafafa;
+    --bg-selected: #ebf3fc;
+    --border: #d1d1d1;
+    --border-strong: #b8b8b8;
+    --text: #242424;
+    --text-secondary: #424242;
+    --text-muted: #616161;
+    --brand: #0f6cbd;
+    --brand-soft: #f0f6fc;
+    --success: #107c10;
+    --success-bg: #f1faf1;
+    --warning: #8a4b08;
+    --warning-bg: #fff7e6;
+    --danger: #c50f1f;
+    --lamp-lit: #ffb900;
+    --lamp-off: #3b3f45;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; padding: 32px 16px;
+    color: var(--text); background: var(--bg-app);
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.45;
+  }
+  button, input, select { font: inherit; }
+  h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.2; }
+  h2 { margin: 0 0 5px; font-size: 18px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  p { margin: 0; }
+  code { font-family: Consolas, monospace; font-size: 12px; }
+  .page { max-width: 1200px; margin: 0 auto; }
+  .page-subtitle { max-width: 930px; color: var(--text-secondary); font-size: 14px; }
+
+  .proposal-banner {
+    display: flex; gap: 12px; align-items: flex-start;
+    margin: 20px 0 24px; padding: 13px 15px;
+    border: 1px solid #9cc4e8; border-radius: 7px; background: var(--brand-soft);
+  }
+  .proposal-label {
+    flex: 0 0 auto; padding: 2px 8px; border-radius: 999px;
+    color: #fff; background: var(--brand);
+    font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  }
+  .proposal-banner strong { display: block; margin-bottom: 2px; }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 34px; }
+  .toc a {
+    padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text-secondary); background: #fff; text-decoration: none; font-size: 12px;
+  }
+  .toc a:hover { border-color: var(--brand); color: var(--brand); }
+  .toc .toc-sep { align-self: center; color: var(--text-muted); font-size: 11px; padding: 0 4px; }
+
+  .section { margin: 0 0 52px; scroll-margin-top: 18px; }
+  .section-head { margin-bottom: 14px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+  .section-caption { max-width: 860px; color: var(--text-secondary); font-size: 12px; }
+
+  .stage { padding: 24px 16px; border-radius: 8px; background: #eceff2; }
+  .stack { display: grid; gap: 16px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  .design-notes {
+    max-width: 860px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: 7px;
+    background: #fffdf5; color: var(--text-secondary); font-size: 12px;
+  }
+  .design-notes h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--warning); }
+  .design-notes ul { margin: 0; padding-left: 18px; }
+  .design-notes li + li { margin-top: 6px; }
+
+  .mock-control {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 1px dashed var(--warning); border-radius: 999px; background: var(--warning-bg);
+    color: var(--warning); font-size: 11px; cursor: pointer;
+  }
+
+  /* App chrome */
+  .app {
+    overflow: hidden; border: 1px solid var(--border-strong); border-radius: 7px;
+    background: var(--bg-panel); box-shadow: 0 8px 24px rgba(0,0,0,.08);
+  }
+  .app-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg-subtle); }
+  .app-tab { padding: 9px 14px; color: var(--text-muted); border-bottom: 2px solid transparent; }
+  .app-tab.active { color: var(--text); border-bottom-color: var(--brand); font-weight: 600; }
+  .app-body { padding: 14px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar h3 { margin: 0; }
+
+  .btn {
+    padding: 5px 12px; border: 1px solid var(--border-strong); border-radius: 4px;
+    background: #fff; color: var(--text); cursor: pointer;
+  }
+  .btn:hover { background: var(--bg-subtle); }
+  .btn-primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+  .btn-primary:hover { background: #115ea3; }
+  .btn-small { padding: 2px 8px; font-size: 12px; }
+  .btn-icon { padding: 0 6px; font-size: 12px; line-height: 20px; }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+  .chip {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-subtle);
+    color: var(--text-muted); font-size: 11px; white-space: nowrap;
+  }
+  .chip.wired { border-color: #9fd89f; background: var(--success-bg); color: var(--success); }
+  .chip.attn { border-color: #f0c987; background: var(--warning-bg); color: var(--warning); }
+  .chip.later { border-style: dashed; }
+  .chip.proposed { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+
+  /* Dialog */
+  .dialog {
+    width: min(760px, 100%); margin: 0 auto; overflow: hidden;
+    border: 1px solid var(--border-strong); border-radius: 7px; background: #fff;
+    box-shadow: 0 12px 34px rgba(0,0,0,.12);
+  }
+  .dialog.wide { width: min(1080px, 100%); }
+  .dialog-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 600;
+  }
+  .dialog-body { padding: 16px; }
+  .dialog-foot {
+    display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg-subtle);
+  }
+  .dialog-foot .foot-status { margin-right: auto; color: var(--text-muted); font-size: 12px; }
+  .field-label { margin-bottom: 6px; color: var(--text-secondary); font-weight: 600; font-size: 12px; }
+  .input, select.input {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 4px; background: #fff;
+  }
+
+  /* Stepper */
+  .stepper { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-subtle); }
+  .step {
+    display: flex; align-items: center; gap: 8px; padding: 10px 18px;
+    border-bottom: 2px solid transparent; color: var(--text-muted); cursor: pointer;
+  }
+  .step.current { color: var(--text); border-bottom-color: var(--brand); font-weight: 600; }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong);
+    font-size: 11px; background: #fff;
+  }
+  .step.current .step-num { border-color: var(--brand); background: var(--brand); color: #fff; }
+  .step-state { font-size: 11px; font-weight: 400; }
+  .step-state.ok { color: var(--success); }
+  .step-state.attn { color: var(--warning); }
+
+  /* Add facility choices */
+  .choice-list { display: grid; gap: 8px; margin-bottom: 16px; }
+  .choice {
+    display: grid; grid-template-columns: 18px 56px 1fr; gap: 12px; align-items: center;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  }
+  .choice.selected { border-color: var(--brand); background: var(--bg-selected); }
+  .choice.disabled { opacity: .55; cursor: not-allowed; }
+  .choice-title { font-weight: 600; }
+  .choice-desc { color: var(--text-secondary); font-size: 12px; }
+  .choice-examples { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+  /* Editor panes */
+  .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 14px; min-height: 380px; }
+  @media (max-width: 820px) { .panes { grid-template-columns: 1fr; } }
+  .pane { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .pane-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--bg-subtle); font-weight: 600; font-size: 12px;
+  }
+  .pane-body { padding: 10px; flex: 1; }
+  .pane-body > * + * { margin-top: 10px; }
+  .empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    min-height: 220px; padding: 20px; text-align: center; color: var(--text-muted);
+  }
+  .empty strong { color: var(--text-secondary); font-size: 14px; }
+
+  .list { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .list-group { padding: 4px 8px; background: var(--bg-subtle); color: var(--text-muted); font-size: 11px; font-weight: 600; border-bottom: 1px solid #eee; }
+  .list-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #eee; }
+  .list-item:last-child { border-bottom: 0; }
+  .list-item .meta { color: var(--text-muted); font-size: 11px; }
+  .list-item .grow { flex: 1; min-width: 0; }
+  .list-item .name { font-weight: 600; }
+  .list-item.on-panel { color: var(--text-muted); }
+  .list-item.selectable { cursor: pointer; }
+  .list-item.selectable:hover { background: var(--bg-subtle); }
+  .list-item.selected { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--brand); }
+  .shortcut-row { display: flex; gap: 6px; align-items: center; }
+  .shortcut-row select { flex: 1; }
+
+  .segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 4px; overflow: hidden; }
+  .segment { padding: 3px 10px; cursor: pointer; font-size: 12px; background: #fff; }
+  .segment + .segment { border-left: 1px solid var(--border-strong); }
+  .segment.selected { background: var(--brand); color: #fff; }
+
+  .connector { margin-top: 4px; }
+  .connector-label { margin-bottom: 4px; color: var(--text-muted); font-size: 11px; }
+  .pin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .pin {
+    padding: 5px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: left;
+    font-size: 11px; background: #fff; cursor: pointer; min-height: 42px;
+  }
+  .pin .pin-id { display: block; font-family: Consolas, monospace; font-weight: 600; }
+  .pin .pin-owner { display: block; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pin:hover:not(.blocked) { border-color: var(--brand); }
+  .pin.blocked { background: #f0f0f0; color: #8a8a8a; cursor: not-allowed; }
+  .pin.outside { background: #faf6ee; border-style: dashed; }
+  .pin.panel { background: #f4f8fc; }
+  .pin.mine { border: 2px solid var(--brand); background: var(--bg-selected); }
+  .pin.mine .pin-owner { color: var(--brand); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-muted); font-size: 11px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 4px; border: 1px solid var(--border); vertical-align: -1px; }
+  .legend .l-free::before { background: #fff; }
+  .legend .l-panel::before { background: #f4f8fc; }
+  .legend .l-outside::before { background: #faf6ee; border-style: dashed; }
+  .legend .l-blocked::before { background: #f0f0f0; }
+  .legend .l-mine::before { background: var(--bg-selected); border: 2px solid var(--brand); }
+
+  .note { padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+  .note.warn { color: var(--warning); background: var(--warning-bg); }
+  .note.ok { color: var(--success); background: var(--success-bg); }
+  .note.info { color: var(--text-secondary); background: var(--bg-subtle); }
+
+  .lamp { display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; background: var(--lamp-off); border: 1px solid #111; vertical-align: -2px; }
+  .lamp.lit { background: var(--lamp-lit); box-shadow: 0 0 6px var(--lamp-lit); }
+  .lamp.none { background: transparent; border: 1px dashed var(--border-strong); }
+
+  /* Railroad card */
+  .facility-card { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .facility-card + .facility-card { margin-top: 10px; }
+  .facility-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .facility-card-title { font-weight: 600; }
+  .facility-card .sub { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+  .lamp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; margin-top: 10px; }
+  .lamp-tile { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid #eee; border-radius: 5px; cursor: pointer; }
+  .lamp-tile:hover { border-color: var(--border-strong); }
+  .lamp-tile .t-name { font-weight: 600; font-size: 12px; }
+  .lamp-tile .t-meta { color: var(--text-muted); font-size: 11px; }
+
+  /* Reference sections */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .mini-card { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .mini-card .sub { color: var(--text-muted); font-size: 11px; }
+  .more-cards { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border-strong); border-radius: 6px; color: var(--text-muted); min-height: 46px; }
+  .options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+  .option { padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: #fff; }
+  .option.recommended { border: 2px solid var(--brand); }
+  .option h3 { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .option ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 12px; }
+  .option .pro::marker { content: "+  "; color: var(--success); font-weight: 700; }
+  .option .con::marker { content: "–  "; color: var(--danger); font-weight: 700; }
+  .future-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .future { padding: 12px; border: 1px dashed var(--border-strong); border-radius: 7px; background: #fff; }
+  .future .flow { margin: 8px 0; padding: 8px; border-radius: 5px; background: var(--bg-subtle); font-family: Consolas, monospace; font-size: 11px; }
+  .future p { color: var(--text-secondary); font-size: 12px; }
+  table.rows { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.rows th { text-align: left; padding: 5px 6px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  table.rows td { padding: 5px 6px; border-bottom: 1px solid #eee; }
+  .decision-list, .question-list { display: grid; gap: 10px; }
+  .decision, .question { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .decision { border-left: 4px solid var(--success); }
+  .question { border-left: 4px solid var(--warning); }
+  .decision strong, .question strong { display: block; margin-bottom: 3px; }
+  .decision p, .question p { color: var(--text-secondary); font-size: 12px; }
+  .question .lean { margin-top: 6px; color: var(--brand); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Panel facility</h1>
+  <p class="page-subtitle">
+    Block indicator lamps nearly always live on a panel or fascia. This proposal replaces
+    "one Block Indicator facility per LED" with one facility per panel. You choose the blocks the
+    panel shows, then wire each block to its lamp, the same way the signals editor wires each signal.
+  </p>
+
+  <div class="proposal-banner">
+    <span class="proposal-label">Proposal</span>
+    <div>
+      <strong>Mockup for Spec 021 (<a href="spec.md">spec.md</a>). Revised 2026-11-25.</strong>
+      Where this mockup and the spec differ, the spec wins.
+      Sections 1–4 follow what the modeler sees, in order: Add facility, the Blocks step,
+      the Wiring step, then the Railroad tab. The three screens share one set of mockup data,
+      so changes in one step show up in the next. Background, options and open questions come after.
+    </div>
+  </div>
+
+  <nav class="toc">
+    <a href="#add">1. Add facility</a>
+    <a href="#blocks">2. Blocks step</a>
+    <a href="#wiring">3. Wiring step</a>
+    <a href="#railroad">4. Railroad tab</a>
+    <span class="toc-sep">Background</span>
+    <a href="#why">5. Why a panel</a>
+    <a href="#decisions">6. Decisions so far</a>
+    <a href="#future">7. Later row types</a>
+    <a href="#migration">8. Migration</a>
+    <a href="#questions">9. Open questions</a>
+  </nav>
+
+  <!-- 1. ADD FACILITY -->
+  <section class="section" id="add">
+    <div class="section-head">
+      <h2>1. Add facility</h2>
+      <p class="section-caption">Panel takes Block Indicator's place in the list. After you name it, the Panel editor opens on the Blocks step.</p>
+    </div>
+    <div class="stage stack">
+      <div class="dialog">
+        <div class="dialog-head"><span>Add facility</span><span>×</span></div>
+        <div class="dialog-body">
+          <div class="field-label">Behavior template</div>
+          <div class="choice-list">
+            <label class="choice selected">
+              <input type="radio" name="ft" checked>
+              <svg viewBox="0 0 56 42" aria-hidden="true">
+                <rect x="4" y="6" width="48" height="30" rx="3" fill="#2b3a2f"/>
+                <circle cx="16" cy="21" r="4" fill="#ffb900"/>
+                <circle cx="28" cy="21" r="4" fill="#3b3f45" stroke="#888"/>
+                <circle cx="40" cy="21" r="4" fill="#ffb900"/>
+              </svg>
+              <div>
+                <div class="choice-title">Panel</div>
+                <div class="choice-desc">Lamps on a fascia or control panel that show which blocks are occupied.</div>
+                <div class="choice-examples">Fascia mimic · dispatcher panel · helix or staging indicators</div>
+              </div>
+            </label>
+            <label class="choice">
+              <input type="radio" name="ft">
+              <svg viewBox="0 0 56 42" aria-hidden="true">
+                <line x1="3" y1="28" x2="53" y2="28" stroke="#56606d" stroke-width="2"/>
+                <line x1="15" y1="28" x2="15" y2="13" stroke="#737b86" stroke-width="2"/><circle cx="15" cy="9" r="4" fill="#17a65b"/>
+                <line x1="31" y1="28" x2="31" y2="13" stroke="#737b86" stroke-width="2"/><circle cx="31" cy="9" r="4" fill="#e0a800"/>
+                <line x1="47" y1="28" x2="47" y2="13" stroke="#737b86" stroke-width="2"/><circle cx="47" cy="9" r="4" fill="#c50f1f"/>
+              </svg>
+              <div>
+                <div class="choice-title">Automatic Block Signals</div>
+                <div class="choice-desc">Signals that respond to occupancy and the next signal.</div>
+              </div>
+            </label>
+            <label class="choice disabled">
+              <input type="radio" name="ft" disabled>
+              <svg viewBox="0 0 56 42" aria-hidden="true">
+                <line x1="3" y1="30" x2="53" y2="30" stroke="#56606d" stroke-width="2"/>
+                <line x1="16" y1="30" x2="23" y2="13" stroke="#56606d" stroke-width="2"/>
+                <line x1="23" y1="13" x2="35" y2="13" stroke="#56606d" stroke-width="2"/>
+                <line x1="35" y1="13" x2="42" y2="30" stroke="#56606d" stroke-width="2"/>
+              </svg>
+              <div>
+                <div class="choice-title">Interlocking Plant <span class="chip later">later</span></div>
+                <div class="choice-desc">Signals that govern routes over power switches at one location.</div>
+              </div>
+            </label>
+          </div>
+          <div class="field-label">Name</div>
+          <input class="input" type="text" value="Eagle Creek fascia">
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><button class="btn btn-primary" onclick="location.hash='blocks'">Add facility</button></div>
+      </div>
+      <aside class="design-notes">
+        <h3>Design notes</h3>
+        <ul>
+          <li>As with Automatic Block Signals, nothing is created until Done on the last step. Cancel or close discards the editor's work.</li>
+          <li>The description names occupancy only. It widens when later row types arrive (section 7).</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 2. BLOCKS STEP -->
+  <section class="section" id="blocks">
+    <div class="section-head">
+      <h2>2. Blocks step</h2>
+      <p class="section-caption">
+        This is what the modeler sees first: an empty panel. Add blocks one at a time, or all of a
+        signals facility's or a detector board's blocks at once. The order here is the panel's order,
+        used on the Wiring step and the Railroad tab.
+      </p>
+    </div>
+    <div class="stage stack">
+      <div class="dialog wide">
+        <div class="dialog-head"><span>Eagle Creek fascia</span><span>×</span></div>
+        <div class="stepper" data-stepper></div>
+        <div class="dialog-body">
+          <div class="panes">
+            <div class="pane">
+              <div class="pane-head"><span>On this panel</span><span class="chip" id="b-count">0 blocks</span></div>
+              <div class="pane-body" id="b-panel"></div>
+            </div>
+            <div class="pane">
+              <div class="pane-head"><span>Detected blocks</span></div>
+              <div class="pane-body">
+                <div>
+                  <div class="field-label">Add all blocks from</div>
+                  <div class="shortcut-row">
+                    <select class="input" id="b-source">
+                      <option value="abs:Mainline Eastbound">Mainline Eastbound · Automatic Block Signals</option>
+                      <option value="board:Eagle Creek BOD">Eagle Creek BOD · detector board</option>
+                      <option value="board:Helix BOD">Helix BOD · detector board</option>
+                    </select>
+                    <button class="btn" id="b-add-source">Add</button>
+                  </div>
+                </div>
+                <input class="input" type="search" id="b-search" placeholder="Search blocks">
+                <div class="list" id="b-available"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <span class="foot-status" id="b-foot"></span>
+          <button class="btn">Cancel</button>
+          <button class="btn btn-primary" id="b-next">Next: Wiring</button>
+        </div>
+      </div>
+      <aside class="design-notes">
+        <h3>Design notes</h3>
+        <ul>
+          <li>Try it: add Mainline Eastbound, then a helix block, then reorder or remove one.</li>
+          <li>"Add all blocks from" is only a way to select. The panel doesn't follow the signals facility afterwards, and removing that facility doesn't change the panel.</li>
+          <li>Blocks are listed by detector board. The meta line names any signals facility a block belongs to, as context.</li>
+          <li>No track diagram. A panel's blocks have no travel order or connections of their own, so a diagram would need a track model for the whole layout or a freehand editor. See decision D4.</li>
+          <li>Next is available with no blocks, but the Wiring step has nothing to show until there is one.</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 3. WIRING STEP -->
+  <section class="section" id="wiring">
+    <div class="section-head">
+      <h2>3. Wiring step</h2>
+      <p class="section-caption">
+        Pick a block, then pick its lamp's board and pin. The pins appear as the board labels them,
+        so a custom PCB's own layout decides which pin each block uses. Done is on this step.
+      </p>
+    </div>
+    <div class="stage stack">
+      <div class="dialog wide">
+        <div class="dialog-head"><span>Eagle Creek fascia</span><span>×</span></div>
+        <div class="stepper" data-stepper></div>
+        <div class="dialog-body">
+          <div class="toolbar" style="margin-bottom:10px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span class="field-label" style="margin:0">Lamps are lit when the block is</span>
+              <div class="segmented" id="w-default"></div>
+            </div>
+            <span id="w-mock-load"></span>
+          </div>
+          <div class="panes">
+            <div class="pane">
+              <div class="pane-head"><span>Blocks</span><span class="chip" id="w-summary"></span></div>
+              <div class="pane-body" id="w-blocks"></div>
+            </div>
+            <div class="pane">
+              <div class="pane-head"><span id="w-detail-title">Lamp</span></div>
+              <div class="pane-body" id="w-detail"></div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <span class="foot-status" id="w-foot"></span>
+          <button class="btn" id="w-back">Back</button>
+          <button class="btn btn-primary" id="w-done">Done</button>
+        </div>
+      </div>
+      <aside class="design-notes">
+        <h3>Design notes</h3>
+        <ul>
+          <li>The mockup data wires the four Main blocks to pins out of order (#9, #3, #14, #6), as a PCB layout might.</li>
+          <li>Clicking the block's own pin again clears it, as in the signals Wiring step. There is no separate Clear button.</li>
+          <li>Pins this panel already uses show their block's name. Choosing one moves that pin to the selected block, and the block that had it then needs a lamp. The status line says so.</li>
+          <li>Pins a mast or another facility uses can't be chosen. Pins used outside Bowties show their Lamp Description and can be released, as in the signals Wiring step.</li>
+          <li>"Lit when" is one panel setting. Each block can override it, for example for a "clear" lamp on a green LED.</li>
+          <li>Done saves even if some blocks have no lamp yet. The panel is then Incomplete and the card says how many need a lamp.</li>
+          <li>Each wired block creates one <code>lamp-indicator</code> channel on a Direct Lamp Control row, with both Lamp On and Lamp Off set. The Lamp Description defaults to the block name.</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 4. RAILROAD TAB -->
+  <section class="section" id="railroad">
+    <div class="section-head">
+      <h2>4. Railroad tab</h2>
+      <p class="section-caption">
+        After Done, the panel card lists its blocks in panel order with each lamp's pin and live state.
+        Click a tile to fake an occupancy change.
+      </p>
+    </div>
+    <div class="stage stack">
+      <div class="app">
+        <div class="app-tabs"><span class="app-tab">Configuration</span><span class="app-tab">Bowties</span><span class="app-tab active">Railroad</span></div>
+        <div class="app-body">
+          <div class="toolbar"><h3>Facilities</h3><button class="btn btn-small">+ Add facility</button></div>
+          <div class="facility-card">
+            <div class="facility-card-head">
+              <div><span class="facility-card-title">Mainline Eastbound</span> <span class="chip">Automatic Block Signals</span></div>
+              <div><span class="chip wired">Wired</span> <button class="btn btn-small">Edit</button></div>
+            </div>
+            <div class="sub">4 blocks · 4 signals · track diagram not shown in this mockup</div>
+          </div>
+          <div class="facility-card">
+            <div class="facility-card-head">
+              <div><span class="facility-card-title">Eagle Creek fascia</span> <span class="chip">Panel</span></div>
+              <div><span id="r-status"></span> <button class="btn btn-small" onclick="location.hash='wiring'">Edit</button></div>
+            </div>
+            <div class="sub" id="r-sub"></div>
+            <div class="lamp-grid" id="r-grid"></div>
+          </div>
+        </div>
+      </div>
+      <aside class="design-notes">
+        <h3>Design notes</h3>
+        <ul>
+          <li>The lamp state comes from the lamp channel, not the block. If a write didn't take, the lamp and the block disagree, and the tile shows it.</li>
+          <li>Blocks that also belong to Mainline Eastbound appear on both cards. The panel <em>uses</em> those occupancy channels. It doesn't own them (Q1).</li>
+          <li>The Channels panel's "bound to" column becomes a list, for example "Main 2 · used by Mainline Eastbound, Eagle Creek fascia".</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 5. WHY -->
+  <section class="section" id="why">
+    <div class="section-head">
+      <h2>5. Why a panel</h2>
+      <p class="section-caption">
+        Today a modeler with 24 block lamps creates 24 Block Indicator facilities. Each one pairs one
+        occupancy channel with one lamp, which is a named bowtie and little else.
+      </p>
+    </div>
+    <div class="stage stack">
+      <div class="app">
+        <div class="app-tabs"><span class="app-tab">Configuration</span><span class="app-tab">Bowties</span><span class="app-tab active">Railroad</span></div>
+        <div class="app-body">
+          <div class="toolbar"><h3>Facilities · today</h3></div>
+          <div class="card-grid" id="today-cards"></div>
+        </div>
+      </div>
+      <div class="options-grid">
+        <div class="option">
+          <h3>A. Keep one per indicator <span class="chip">today</span></h3>
+          <ul>
+            <li class="pro">No work. It already ships.</li>
+            <li class="con">The list grows with the number of LEDs.</li>
+            <li class="con">Nothing records that the lamps share a panel.</li>
+          </ul>
+        </div>
+        <div class="option">
+          <h3>B. Lamps inside Automatic Block Signals</h3>
+          <ul>
+            <li class="pro">Reuses the block list and Wiring step.</li>
+            <li class="con">Many fascias have lamps and no signals.</li>
+            <li class="con">A panel spans lines, sidings, yards and parts of plants. A signals facility is one direction of one line.</li>
+            <li class="con">Rebuilding the signals would disturb the panel.</li>
+          </ul>
+        </div>
+        <div class="option">
+          <h3>C. A bulk "Block Indicators" facility</h3>
+          <ul>
+            <li class="pro">Fixes the card count.</li>
+            <li class="con">Named for the mechanism, not the place.</li>
+            <li class="con">Turnout lamps and repeaters would need sibling facilities.</li>
+          </ul>
+        </div>
+        <div class="option recommended">
+          <h3>D. Panel facility <span class="chip proposed">this mockup</span></h3>
+          <ul>
+            <li class="pro">One facility per physical panel, which matches how lamps are actually installed.</li>
+            <li class="pro">Its Wiring step reuses the signals editor's pattern.</li>
+            <li class="pro">Later row types extend it without new facilities.</li>
+            <li class="con">Needs a rule for channels that several facilities use (Q1).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. DECISIONS -->
+  <section class="section" id="decisions">
+    <div class="section-head">
+      <h2>6. Decisions so far</h2>
+      <p class="section-caption">Made while iterating on this mockup. Revisit any of them by editing this list.</p>
+    </div>
+    <div class="decision-list">
+      <div class="decision">
+        <strong>D1. Wire block by block, not by automatic pairing.</strong>
+        <p>Panel PCBs route pins to suit the board, so the pin for each block is a deliberate choice. An earlier draft paired blocks with pins in order. It was dropped.</p>
+      </div>
+      <div class="decision">
+        <strong>D2. Two steps, Blocks then Wiring, with Done on Wiring.</strong>
+        <p>Matches the signals editor. The earlier draft's "Add indicators" sub-dialog, which had its own commit button inside the editor, was dropped.</p>
+      </div>
+      <div class="decision">
+        <strong>D3. Choose the block first. No pin-first view for now.</strong>
+        <p>Choosing a pin and then its block would help someone working from a schematic. It is deferred until someone asks for it.</p>
+      </div>
+      <div class="decision">
+        <strong>D4. No panel diagram.</strong>
+        <p>The signals diagram comes from that facility's own data: blocks in travel order, joins and turnouts. A panel has only a set of blocks, so drawing one would need a track model for the whole layout or a freehand editor. Lists are used instead.</p>
+      </div>
+      <div class="decision">
+        <strong>D5. No "fill the rest in order" helper.</strong>
+        <p>It follows from D1. It can come back if hand-wired fascias show a need.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. FUTURE -->
+  <section class="section" id="future">
+    <div class="section-head">
+      <h2>7. Later row types</h2>
+      <p class="section-caption">This is why the facility is called Panel rather than Block Indicators. When these arrive, the Blocks step becomes "What this panel shows" and the Wiring step's pin grid takes the row's pins.</p>
+    </div>
+    <div class="future-grid">
+      <div class="future">
+        <h3>Turnout position</h3>
+        <div class="flow">turnout-position (normal / reverse)<br>→ 2 lamps, or 1 bicolor</div>
+        <p>Needs a turnout-position role. The Wiring detail shows two pin pickers.</p>
+      </div>
+      <div class="future">
+        <h3>Signal repeater</h3>
+        <div class="flow">signal-indication (Stop / Approach / Clear)<br>→ R/Y/G lamps or 1 bicolor</div>
+        <p>Uses the signal channels Automatic Block Signals already creates. Open: can direct lamps follow aspects cleanly, or does a repeater need a mast of its own?</p>
+      </div>
+      <div class="future">
+        <h3>Push button / toggle</h3>
+        <div class="flow">panel input → turnout command, route request</div>
+        <p>The panel produces events instead of consuming them. A first step toward CTC-style panels.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. MIGRATION -->
+  <section class="section" id="migration">
+    <div class="section-head">
+      <h2>8. Migration from Block Indicator</h2>
+      <p class="section-caption">Existing layouts keep working. Each Block Indicator becomes one block on a panel, with one panel per lamp board as the best guess at "same physical place". The events don't change, so nothing is written to the bus.</p>
+    </div>
+    <div class="stage">
+      <div class="two-col">
+        <div class="app"><div class="app-body">
+          <div class="field-label">Before</div>
+          <table class="rows">
+            <thead><tr><th>Facility</th><th>Block</th><th>Lamp</th></tr></thead>
+            <tbody>
+              <tr><td>Main 1</td><td>Main 1</td><td>Fascia #9</td></tr>
+              <tr><td>Main 2</td><td>Main 2</td><td>Fascia #3</td></tr>
+              <tr><td>Siding light</td><td>Eagle Creek Siding</td><td>Fascia #11</td></tr>
+              <tr><td>Westport</td><td>Westport Lead</td><td>West #13</td></tr>
+              <tr><td>Helix up</td><td>Helix Upper</td><td>empty slot</td></tr>
+            </tbody>
+          </table>
+        </div></div>
+        <div class="app"><div class="app-body">
+          <div class="field-label">After</div>
+          <table class="rows">
+            <thead><tr><th>Panel</th><th>Block</th><th>Lamp</th></tr></thead>
+            <tbody>
+              <tr><td rowspan="3">Eagle Creek Fascia panel</td><td>Main 1</td><td>#9</td></tr>
+              <tr><td>Main 2</td><td>#3</td></tr>
+              <tr><td>Eagle Creek Siding</td><td>#11</td></tr>
+              <tr><td>West Signals panel</td><td>Westport Lead</td><td>#13</td></tr>
+              <tr><td>Unassigned lamps panel</td><td>Helix Upper</td><td>needs a lamp</td></tr>
+            </tbody>
+          </table>
+          <p class="note info" style="margin-top:8px">The old facility name becomes the lamp's Lamp Description, so names aren't lost.</p>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9. QUESTIONS -->
+  <section class="section" id="questions">
+    <div class="section-head">
+      <h2>9. Open questions</h2>
+      <p class="section-caption">Ordered by how much they shape the data model.</p>
+    </div>
+    <div class="question-list">
+      <div class="question">
+        <strong>Q1. Do facilities own channels or just use them?</strong>
+        <p>Today a channel is bound to at most one Facility Slot. A panel that shows blocks from a signals facility, or later repeats a signal, needs several facilities to use one channel.</p>
+        <p class="lean">Leaning: a facility owns the channels it creates (lamps, signal indications) and uses any others. Removing a facility deletes only what it owns.</p>
+      </div>
+      <div class="question">
+        <strong>Q2. Can a panel span boards?</strong>
+        <p>The mockup allows a board choice per block. A large panel might be wired to two boards.</p>
+        <p class="lean">Leaning: yes. The Wiring detail remembers the last board chosen, so a one-board panel never touches the board picker.</p>
+      </div>
+      <div class="question">
+        <strong>Q3. Does the fixed-slot Behavior Template survive?</strong>
+        <p>Block Indicator is its only user. Automatic Block Signals already keeps its own record. Panel would do the same.</p>
+      </div>
+      <div class="question">
+        <strong>Q4. Can a block appear on two panels?</strong>
+        <p>For example a helix lamp on both the upper and lower fascia. With Q1's "uses" rule, yes: each panel owns its own lamp.</p>
+      </div>
+      <div class="question">
+        <strong>Q5. Which boards besides Signal LCC can drive lamps?</strong>
+        <p>The lamp style today is <code>single-led-direct-lamp</code> on Signal LCC. Tower LCC and other boards would add styles for the same <code>lamp-indicator</code> role. The pin grid has to come from the style.</p>
+      </div>
+      <div class="question">
+        <strong>Q6. Is "Panel" the right name?</strong>
+        <p>Alternatives: Control Panel, Fascia. Check the choice against the glossary's avoid-lists.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  // ---------- Mockup data ----------
+  const BLOCKS = [
+    { name: "Main 1", board: "Eagle Creek BOD", facility: "Mainline Eastbound", state: "clear" },
+    { name: "Main 2", board: "Eagle Creek BOD", facility: "Mainline Eastbound", state: "occupied" },
+    { name: "Main 3", board: "Eagle Creek BOD", facility: "Mainline Eastbound", state: "clear" },
+    { name: "Main 4", board: "Eagle Creek BOD", facility: "Mainline Eastbound", state: "clear" },
+    { name: "Eagle Creek Siding", board: "Eagle Creek BOD", state: "occupied" },
+    { name: "Eagle Creek Team Track", board: "Eagle Creek BOD", state: "clear" },
+    { name: "Helix Lower", board: "Helix BOD", state: "clear" },
+    { name: "Helix Upper", board: "Helix BOD", state: "occupied" },
+    { name: "Westport Lead", board: "West BOD", state: "clear" },
+    { name: "Staging A", board: "West BOD", state: "unknown" },
+  ];
+  const blockByName = Object.fromEntries(BLOCKS.map((b) => [b.name, b]));
+
+  const HEADS = ["H1", "H2", "H3", "H4"], COLORS = ["G", "Y", "R", "L"];
+  function pinsFor() {
+    const pins = [];
+    HEADS.forEach((h, hi) => COLORS.forEach((c, ci) => pins.push({ n: hi * 4 + ci + 1, label: `${h}-${c}`, head: h })));
+    return pins;
+  }
+  const BOARDS = {
+    "Eagle Creek Fascia": {
+      kind: "Signal LCC",
+      pins: pinsFor(),
+      blocked: { 1: "Mast · Mainline Eastbound · Signal 3", 2: "Mast · Mainline Eastbound · Signal 3" },
+      outside: { 16: "Aisle light" },
+    },
+    "West Signals": {
+      kind: "Signal LCC",
+      pins: pinsFor(),
+      blocked: { 1: "Mast · Signal 1", 2: "Mast · Signal 1", 5: "Mast · Signal 2", 6: "Mast · Signal 2", 7: "Mast · Signal 2" },
+      outside: { 15: "Valance LEDs", 16: "Valance LEDs" },
+    },
+  };
+
+  // ---------- Shared editor state ----------
+  const state = {
+    step: "blocks",
+    panel: [],          // ordered block names
+    wiring: {},         // block -> { board, pin }
+    override: {},       // block -> "occupied" | "clear"
+    lit: "occupied",
+    selected: null,
+    lastBoard: "Eagle Creek Fascia",
+    released: {},       // "board:pin" -> true
+    search: "",
+    message: null,
+  };
+
+  function pinOwner(board, n) {
+    for (const [blk, w] of Object.entries(state.wiring)) {
+      if (w && w.board === board && w.pin === n && state.panel.includes(blk)) return blk;
+    }
+    return null;
+  }
+  function litWhen(blk) { return state.override[blk] || state.lit; }
+  function wiredCount() { return state.panel.filter((b) => state.wiring[b]).length; }
+  function needsLamp() { return state.panel.length - wiredCount(); }
+
+  // ---------- Stepper ----------
+  function renderSteppers() {
+    document.querySelectorAll("[data-stepper]").forEach((el, idx) => {
+      const here = idx === 0 ? "blocks" : "wiring";
+      const n = state.panel.length;
+      const blocksState = n ? `<span class="step-state ok">${n} block${n > 1 ? "s" : ""}</span>` : `<span class="step-state">no blocks yet</span>`;
+      const need = needsLamp();
+      const wiringState = !n ? `<span class="step-state">—</span>` : need ? `<span class="step-state attn">${need} need${need > 1 ? "" : "s"} a lamp</span>` : `<span class="step-state ok">all wired</span>`;
+      el.innerHTML =
+        `<div class="step ${here === "blocks" ? "current" : ""}" data-go="blocks"><span class="step-num">1</span>Blocks ${blocksState}</div>` +
+        `<div class="step ${here === "wiring" ? "current" : ""}" data-go="wiring"><span class="step-num">2</span>Wiring ${wiringState}</div>`;
+      el.querySelectorAll("[data-go]").forEach((s) => s.addEventListener("click", () => { location.hash = s.dataset.go; }));
+    });
+  }
+
+  // ---------- Blocks step ----------
+  function addBlock(name) {
+    if (!state.panel.includes(name)) state.panel.push(name);
+  }
+  function renderBlocks() {
+    const panelEl = document.getElementById("b-panel");
+    document.getElementById("b-count").textContent = `${state.panel.length} block${state.panel.length === 1 ? "" : "s"}`;
+    if (!state.panel.length) {
+      panelEl.innerHTML = `<div class="empty"><strong>No blocks on this panel yet</strong>
+        <span>Add the blocks whose lamps are on this panel. You can add all of a signals facility's or a detector board's blocks at once.</span></div>`;
+    } else {
+      const list = document.createElement("div");
+      list.className = "list";
+      state.panel.forEach((name, i) => {
+        const b = blockByName[name];
+        const row = document.createElement("div");
+        row.className = "list-item";
+        row.innerHTML = `<span class="meta" style="width:18px">${i + 1}</span>
+          <div class="grow"><div class="name">${name}</div><div class="meta">${b.board}${b.facility ? " · " + b.facility : ""}</div></div>`;
+        const up = btn("↑", i === 0, () => { swap(i, i - 1); });
+        const down = btn("↓", i === state.panel.length - 1, () => { swap(i, i + 1); });
+        const rm = btn("×", false, () => {
+          state.panel.splice(i, 1);
+          delete state.wiring[name];
+          if (state.selected === name) state.selected = null;
+          renderAll();
+        });
+        up.title = "Move up"; down.title = "Move down"; rm.title = "Remove from panel";
+        row.append(up, down, rm);
+        list.appendChild(row);
+      });
+      panelEl.innerHTML = "";
+      panelEl.appendChild(list);
+    }
+
+    const avail = document.getElementById("b-available");
+    avail.innerHTML = "";
+    const groups = {};
+    BLOCKS.filter((b) => b.name.toLowerCase().includes(state.search.toLowerCase()))
+      .forEach((b) => (groups[b.board] = groups[b.board] || []).push(b));
+    Object.entries(groups).forEach(([board, bs]) => {
+      const g = document.createElement("div");
+      g.className = "list-group";
+      g.textContent = board;
+      avail.appendChild(g);
+      bs.forEach((b) => {
+        const on = state.panel.includes(b.name);
+        const row = document.createElement("div");
+        row.className = "list-item" + (on ? " on-panel" : "");
+        row.innerHTML = `<div class="grow"><div>${b.name}</div><div class="meta">${b.facility ? "In " + b.facility : "&nbsp;"}</div></div>`;
+        if (on) {
+          const c = document.createElement("span");
+          c.className = "chip"; c.textContent = "on panel";
+          row.appendChild(c);
+        } else {
+          row.appendChild(btn("Add", false, () => { addBlock(b.name); renderAll(); }, "btn-small"));
+        }
+        avail.appendChild(row);
+      });
+    });
+    if (!Object.keys(groups).length) avail.innerHTML = `<div class="list-item meta">No blocks match.</div>`;
+
+    document.getElementById("b-foot").textContent = state.panel.length ? `${state.panel.length} block${state.panel.length > 1 ? "s" : ""} on this panel` : "Nothing is created until Done on Wiring.";
+  }
+  function swap(a, b) {
+    const p = state.panel;
+    [p[a], p[b]] = [p[b], p[a]];
+    renderAll();
+  }
+  function btn(text, disabled, onClick, cls) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn " + (cls || "btn-icon");
+    b.textContent = text;
+    b.disabled = disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  document.getElementById("b-add-source").addEventListener("click", () => {
+    const [kind, value] = document.getElementById("b-source").value.split(":");
+    BLOCKS.filter((b) => (kind === "abs" ? b.facility === value : b.board === value)).forEach((b) => addBlock(b.name));
+    renderAll();
+  });
+  document.getElementById("b-search").addEventListener("input", (e) => { state.search = e.target.value; renderBlocks(); });
+  document.getElementById("b-next").addEventListener("click", () => { location.hash = "wiring"; });
+
+  // ---------- Wiring step ----------
+  function renderWiring() {
+    // panel default
+    const seg = document.getElementById("w-default");
+    seg.innerHTML = "";
+    ["occupied", "clear"].forEach((v) => {
+      const s = document.createElement("span");
+      s.className = "segment" + (state.lit === v ? " selected" : "");
+      s.textContent = v === "occupied" ? "Occupied" : "Clear";
+      s.addEventListener("click", () => { state.lit = v; renderAll(); });
+      seg.appendChild(s);
+    });
+
+    const mock = document.getElementById("w-mock-load");
+    mock.innerHTML = "";
+    if (!state.panel.length) {
+      const m = document.createElement("span");
+      m.className = "mock-control";
+      m.textContent = "Mockup only: load example panel";
+      m.addEventListener("click", loadExample);
+      mock.appendChild(m);
+    }
+
+    const blocksEl = document.getElementById("w-blocks");
+    const need = needsLamp();
+    document.getElementById("w-summary").textContent = state.panel.length ? `${wiredCount()} of ${state.panel.length} wired` : "none";
+    if (!state.panel.length) {
+      blocksEl.innerHTML = `<div class="empty"><strong>No blocks to wire</strong><span>Add blocks on the Blocks step first.</span></div>`;
+    } else {
+      const list = document.createElement("div");
+      list.className = "list";
+      state.panel.forEach((name) => {
+        const w = state.wiring[name];
+        const b = blockByName[name];
+        const row = document.createElement("div");
+        row.className = "list-item selectable" + (state.selected === name ? " selected" : "");
+        const lampCls = !w ? "none" : (b.state === litWhen(name) ? "lit" : "");
+        row.innerHTML = `<span class="lamp ${lampCls}"></span>
+          <div class="grow"><div class="name">${name}</div>
+          <div class="meta">${w ? `${w.board} · #${w.pin} ${pinLabel(w.board, w.pin)}` : "No lamp yet"}${state.override[name] ? " · lit when " + state.override[name] : ""}</div></div>
+          ${w ? '<span class="chip wired">wired</span>' : '<span class="chip attn">needs a lamp</span>'}`;
+        row.addEventListener("click", () => { state.selected = name; state.message = null; renderWiring(); });
+        list.appendChild(row);
+      });
+      blocksEl.innerHTML = "";
+      blocksEl.appendChild(list);
+    }
+
+    renderDetail();
+
+    document.getElementById("w-foot").textContent = !state.panel.length ? "" :
+      need ? `${need} block${need > 1 ? "s" : ""} without a lamp. Done saves the panel as Incomplete.` : "Every block has a lamp.";
+    document.getElementById("w-done").disabled = !state.panel.length;
+  }
+
+  function pinLabel(board, n) { return BOARDS[board].pins[n - 1].label; }
+
+  function renderDetail() {
+    const title = document.getElementById("w-detail-title");
+    const el = document.getElementById("w-detail");
+    const name = state.selected && state.panel.includes(state.selected) ? state.selected : null;
+    if (!name) {
+      title.textContent = "Lamp";
+      el.innerHTML = state.panel.length ? `<div class="empty"><strong>Choose a block</strong><span>Pick a block on the left to choose its lamp's board and pin.</span></div>` : "";
+      return;
+    }
+    const b = blockByName[name];
+    const w = state.wiring[name];
+    const boardName = w ? w.board : state.lastBoard;
+    title.textContent = `Lamp for ${name}`;
+    el.innerHTML = "";
+
+    const ctx = document.createElement("div");
+    ctx.className = "note info";
+    ctx.textContent = `Detector: ${b.board}${b.facility ? ". Also in " + b.facility + "." : "."}`;
+    el.appendChild(ctx);
+
+    // board
+    const bWrap = document.createElement("div");
+    bWrap.innerHTML = `<div class="field-label">Board</div>`;
+    const sel = document.createElement("select");
+    sel.className = "input";
+    Object.entries(BOARDS).forEach(([n, bd]) => {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = `${n} · ${bd.kind}`; o.selected = n === boardName;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", () => {
+      state.lastBoard = sel.value;
+      if (state.wiring[name] && state.wiring[name].board !== sel.value) delete state.wiring[name];
+      renderAll();
+    });
+    bWrap.appendChild(sel);
+    el.appendChild(bWrap);
+
+    // pins
+    const board = BOARDS[boardName];
+    const pinWrap = document.createElement("div");
+    pinWrap.innerHTML = `<div class="field-label">Pin</div>`;
+    HEADS.forEach((h) => {
+      const conn = document.createElement("div");
+      conn.className = "connector";
+      conn.innerHTML = `<div class="connector-label">Head ${h}</div>`;
+      const grid = document.createElement("div");
+      grid.className = "pin-grid";
+      board.pins.filter((p) => p.head === h).forEach((p) => {
+        const b2 = document.createElement("button");
+        b2.type = "button";
+        b2.className = "pin";
+        const owner = pinOwner(boardName, p.n);
+        const key = `${boardName}:${p.n}`;
+        let ownerText = "free";
+        if (board.blocked[p.n]) { b2.classList.add("blocked"); ownerText = board.blocked[p.n]; b2.title = board.blocked[p.n]; }
+        else if (board.outside[p.n] && !state.released[key]) { b2.classList.add("outside"); ownerText = `Outside Bowties · “${board.outside[p.n]}”`; }
+        else if (owner === name) { b2.classList.add("mine"); ownerText = "this block"; }
+        else if (owner) { b2.classList.add("panel"); ownerText = owner; }
+        b2.innerHTML = `<span class="pin-id">#${p.n} ${p.label}</span><span class="pin-owner">${ownerText}</span>`;
+        if (!board.blocked[p.n]) {
+          b2.addEventListener("click", () => {
+            if (board.outside[p.n] && !state.released[key]) {
+              state.message = { kind: "warn", text: `#${p.n} ${p.label} is used outside Bowties as “${board.outside[p.n]}”.`, release: key };
+              renderDetail();
+              return;
+            }
+            state.message = null;
+            if (owner === name) {
+              // clicking the block's own pin clears it, as in the signals Wiring step
+              delete state.wiring[name];
+              renderAll();
+              return;
+            }
+            if (owner) {
+              delete state.wiring[owner];
+              state.message = { kind: "warn", text: `Moved #${p.n} ${p.label} from ${owner} to ${name}. ${owner} now needs a lamp.` };
+            }
+            state.wiring[name] = { board: boardName, pin: p.n };
+            state.lastBoard = boardName;
+            renderAll();
+          });
+        }
+        grid.appendChild(b2);
+      });
+      conn.appendChild(grid);
+      pinWrap.appendChild(conn);
+    });
+    el.appendChild(pinWrap);
+
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    legend.innerHTML = `<span class="l-free">free</span><span class="l-mine">this block</span><span class="l-panel">another block on this panel</span><span class="l-outside">used outside Bowties</span><span class="l-blocked">used by Bowties elsewhere</span>`;
+    el.appendChild(legend);
+
+    if (state.message) {
+      const m = document.createElement("div");
+      m.className = "note " + state.message.kind;
+      m.textContent = state.message.text + " ";
+      if (state.message.release) {
+        const r = btn("Release pin", false, () => {
+          state.released[state.message.release] = true;
+          state.message = { kind: "ok", text: "Released. The pin's old Lamp Description is cleared on Save." };
+          renderDetail();
+        }, "btn-small");
+        m.appendChild(r);
+      }
+      el.appendChild(m);
+    }
+
+    // per-block lit when
+    const lw = document.createElement("div");
+    lw.innerHTML = `<div class="field-label">Lit when</div>`;
+    const seg = document.createElement("div");
+    seg.className = "segmented";
+    [["", `Panel default (${state.lit})`], ["occupied", "Occupied"], ["clear", "Clear"]].forEach(([v, label]) => {
+      const s = document.createElement("span");
+      s.className = "segment" + ((state.override[name] || "") === v ? " selected" : "");
+      s.textContent = label;
+      s.addEventListener("click", () => { if (v) state.override[name] = v; else delete state.override[name]; renderAll(); });
+      seg.appendChild(s);
+    });
+    lw.appendChild(seg);
+    el.appendChild(lw);
+  }
+
+  function loadExample() {
+    state.panel = ["Main 1", "Main 2", "Main 3", "Main 4", "Eagle Creek Siding", "Helix Lower", "Helix Upper"];
+    state.wiring = {
+      "Main 1": { board: "Eagle Creek Fascia", pin: 9 },
+      "Main 2": { board: "Eagle Creek Fascia", pin: 3 },
+      "Main 3": { board: "Eagle Creek Fascia", pin: 14 },
+      "Main 4": { board: "Eagle Creek Fascia", pin: 6 },
+      "Eagle Creek Siding": { board: "Eagle Creek Fascia", pin: 11 },
+    };
+    state.selected = "Helix Lower";
+    state.message = null;
+    renderAll();
+  }
+
+  document.getElementById("w-back").addEventListener("click", () => { location.hash = "blocks"; });
+  document.getElementById("w-done").addEventListener("click", () => { location.hash = "railroad"; });
+
+  // ---------- Railroad card ----------
+  function renderRailroad() {
+    const status = document.getElementById("r-status");
+    const sub = document.getElementById("r-sub");
+    const grid = document.getElementById("r-grid");
+    const n = state.panel.length, need = needsLamp();
+    status.innerHTML = !n ? '<span class="chip">Empty</span>' : need ? `<span class="chip attn">Incomplete · ${need} need${need > 1 ? "" : "s"} a lamp</span>` : '<span class="chip wired">Wired</span>';
+    const boards = [...new Set(state.panel.map((b) => state.wiring[b] && state.wiring[b].board).filter(Boolean))];
+    sub.textContent = n ? `${n} block${n > 1 ? "s" : ""} · lamps on ${boards.join(", ") || "no board yet"}` : "No blocks yet. Edit to add some.";
+    grid.innerHTML = "";
+    state.panel.forEach((name) => {
+      const b = blockByName[name];
+      const w = state.wiring[name];
+      const tile = document.createElement("div");
+      tile.className = "lamp-tile";
+      const lit = w && b.state === litWhen(name);
+      const blockText = b.state === "unknown" ? "no reading" : b.state;
+      tile.innerHTML = `<span class="lamp ${!w ? "none" : lit ? "lit" : ""}"></span>
+        <div><div class="t-name">${name}</div><div class="t-meta">${w ? `#${w.pin} ${pinLabel(w.board, w.pin)}` : "needs a lamp"} · ${blockText}</div></div>`;
+      tile.addEventListener("click", () => { b.state = b.state === "occupied" ? "clear" : "occupied"; renderAll(); });
+      grid.appendChild(tile);
+    });
+  }
+
+  // ---------- Today cards (section 5) ----------
+  const todayEl = document.getElementById("today-cards");
+  ["Main 1", "Main 2", "Main 3", "Main 4", "Eagle Creek Siding", "Helix Lower", "Helix Upper", "Westport Lead", "Staging A"].forEach((n) => {
+    const c = document.createElement("div");
+    c.className = "mini-card";
+    c.innerHTML = `<div style="display:flex;justify-content:space-between;gap:6px"><strong>${n}</strong><span class="chip wired">Wired</span></div><div class="sub">Block Indicator · 1 lamp</div>`;
+    todayEl.appendChild(c);
+  });
+  const more = document.createElement("div");
+  more.className = "more-cards";
+  more.textContent = "+ 15 more Block Indicators";
+  todayEl.appendChild(more);
+
+  function renderAll() {
+    renderSteppers();
+    renderBlocks();
+    renderWiring();
+    renderRailroad();
+  }
+  renderAll();
+})();
+</script>
+</body>
+</html>

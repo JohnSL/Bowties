@@ -133,15 +133,19 @@ _Avoid_: channel inventory (pre-018 surface, retired), channel list, hardware pa
 ## Facilities System
 
 **Facility**:
-A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility adds no sync or deployment machinery of its own: its effect on hardware is ordinary **Pending Change**s that ride Save (ADR-0001). Block Indicator is a UI veneer over bowties. **Automatic Block Signals** (Spec 020) also persists its own record (ordered blocks, signals, **Claimed Resource**s) in the facility.
+A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility adds no sync or deployment machinery of its own: its effect on hardware is ordinary **Pending Change**s that ride Save (ADR-0001). Block Indicator is a UI veneer over bowties. **Automatic Block Signals** (Spec 020) and **Panel** (Spec 021) also persist their own record in the facility (ABS: ordered blocks and signals; Panel: ordered entries and "lit when"). Their **Claimed Resource**s are derived from the record and slots, never stored.
 _Avoid_: arrangement, signal, device, behavior, automation (these describe future template families; "facility" is the generic noun)
+
+**Panel**:
+A **Facility** for one physical panel or fascia (Spec 021). It holds an ordered list of block entries; each entry references a detected block and may have one lamp, a lamp-indicator **Channel** on a Signal LCC Direct Lamp Control row in the facility's `lamps` slot. The lamp lights when its block is occupied (or clear, by the panel's "lit when" setting or a per-entry override). The pin a lamp drives is its row's Lamp Selection. A panel composes into ordinary configuration edits that Save writes; it creates no bowties. Status: Empty, Incomplete (an entry needs a lamp), or Wired. Replaces Block Indicator.
+_Avoid_: indicator panel, mimic (as a type name), Block Indicator (for the new facility)
 
 **Behavior Template**:
 A declared template for a **Facility**. Carries a stable template ID, display name, ordered list of slot declarations (each with a slot label, producer/consumer designation, and required **Role**), and a mapping from producer-side semantic states to consumer-side commands. The first template is **Block Indicator** (`occupied → lit`, `clear → unlit`). Hardcoded in `bowties-core/src/behavior_templates/` in Spec 018; future declarative YAML loader is Future Considerations.
 _Avoid_: template (alone — ambiguous with structure profile), scenario, recipe (recipes are profile-level), preset
 
 **Facility Slot**:
-A named position within a **Facility**, carrying a producer/consumer designation, a required **Role**, and an optional bound **Channel** reference. Empty slots are first-class — they are how an incomplete plan is represented. A channel is bound to at most one facility slot in this slice. Distinct from **CDI Slot** / CDI group (which is a config structure, not a binding).
+A named position within a **Facility**, carrying a producer/consumer designation, a required **Role**, and an optional bound **Channel** reference. Empty slots are first-class — they are how an incomplete plan is represented. A channel is bound to at most one facility slot. A facility record may also reference a channel without binding it (a Panel entry's block, an Automatic Block Signals block); such references are not slot bindings. Distinct from **CDI Slot** / CDI group (which is a config structure, not a binding).
 _Avoid_: "slot" alone (qualify as "facility slot" or "CDI slot"), placeholder, hole
 
 **Role** (Channel Role):
@@ -197,7 +201,7 @@ The physical appearance that shows an **Aspect**: which lamps are lit, for examp
 _Avoid_: aspect (when lamps are meant), color
 
 **Claimed Resource**:
-A Signal LCC slot (mast, Logic conditional, Track Circuit) that an **Automatic Block Signals** facility configured, recorded in its facility record per node. Recomposition reuses the same slots; removal resets only claimed slots. A slot that is needed but already in use is a blocking issue, never silently overwritten.
+A Signal LCC slot that a facility configured: a mast, Logic conditional or Track Circuit for **Automatic Block Signals**, or a Direct Lamp Control row for a **Panel**. Derived, never stored: from the ABS signals' resources and the recorded Logic placement, and from the lamp channels in a panel's `lamps` slot. Recomposition reuses the same slots; removal resets only claimed slots. A slot that is needed but already in use is a blocking issue, never silently overwritten.
 _Avoid_: allocation, reservation, owned resource
 
 **Hardware-owned Channel**:

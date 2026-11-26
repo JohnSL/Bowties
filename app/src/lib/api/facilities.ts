@@ -23,6 +23,24 @@ export interface Facility {
   slotBindings: Record<string, SlotBinding>;
   /** Compiled Automatic Block Signals intent; absent on other templates. */
   blockSignals?: BlockSignalsRecord;
+  /** Panel intent; absent on other templates. */
+  panel?: PanelRecord;
+}
+
+/// Wire form of `bowties_core::layout::facilities::PanelRecord`.
+export type LitWhen = 'occupied' | 'clear';
+
+export interface PanelRecord {
+  litWhen: LitWhen;
+  /** Entries in panel order. */
+  entries: PanelEntry[];
+}
+
+export interface PanelEntry {
+  entryId: string;
+  blockId: string;
+  lampChannelId?: string;
+  litWhen?: LitWhen;
 }
 
 /// Wire form of `bowties_core::layout::facilities::BlockSignalsRecord`.

@@ -8,10 +8,10 @@ use bowties_core::{
     layout::channels::{ChannelBinding, ChannelRole, InformationChannel},
     layout::state::LayoutState,
     node_key::NodeKey,
-    node_tree::NodeConfigTree,
+    node_tree::{parse_event_id_hex, NodeConfigTree},
     profile::StructureProfile,
     signaling::{
-        compiler::{CompileIssue, NodeConfigEdit, UntrackedOwnerRelease},
+        compiler::{BlockOccupancyEvents, CompileIssue, NodeConfigEdit, UntrackedOwnerRelease},
         facts::{effective_trees, outside_mast_owners, overlay_releases, signal_hardware_facts},
         outputs::attribute_output_facilities,
         preview_block_signals_with_hardware,
@@ -30,9 +30,9 @@ use crate::state::AppState;
 /// through a prefix or display-name match.
 #[derive(Debug, Clone, Default)]
 pub struct ProposalFacts {
-    channels: Vec<InformationChannel>,
-    trees: HashMap<NodeKey, NodeConfigTree>,
-    hardware: SignalHardwareFacts,
+    pub(crate) channels: Vec<InformationChannel>,
+    pub(crate) trees: HashMap<NodeKey, NodeConfigTree>,
+    pub(crate) hardware: SignalHardwareFacts,
     /// Edits that release the request's named untracked owners; their effect
     /// is already applied to `trees` and `hardware`.
     release_edits: Vec<NodeConfigEdit>,
@@ -132,6 +132,19 @@ pub(crate) fn saved_signals_from_layout(
         .unwrap_or_default()
 }
 
+/// A block's occupied/clear events as resolved from the effective trees; each
+/// is `None` when the block has no occupancy channel or the event is unknown.
+pub(crate) fn occupancy_events(facts: &ProposalFacts, block_id: &str) -> BlockOccupancyEvents {
+    let events = facts
+        .channels
+        .iter()
+        .find(|c| c.id == block_id && c.role == ChannelRole::BlockOccupancy)
+        .map(|channel| resolved_detection_events(facts, channel))
+        .unwrap_or_default();
+    let event = |state: &str| events.get(state).and_then(|hex| parse_event_id_hex(hex));
+    BlockOccupancyEvents { block_id: block_id.to_string(), occupied: event("occupied"), clear: event("clear") }
+}
+
 fn resolved_detection_events(
     facts: &ProposalFacts,
     channel: &InformationChannel,
@@ -175,16 +188,16 @@ fn detection_event_mapping(style: &str) -> Option<HashMap<String, u32>> {
 /// The request's named releases are applied here, once, before any fact is
 /// derived: pin owners, slot facts and the free-slot pick all read the
 /// released trees, so preview and compose cannot disagree.
-fn proposal_facts_from_layout(
+pub(crate) fn proposal_facts_from_layout(
     layout: &bowties_core::layout::state::LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
     release: &[ReleaseRequest],
 ) -> ProposalFacts {
     let channels = layout.effective_channels().channels.clone();
-    let claimed = claimed_slots_from_facilities(layout.effective_facilities(), None);
+    let claimed = claimed_slots_from_facilities(layout.effective_facilities(), layout.effective_channels(), None);
     let overlay = overlay_releases(effective_trees(layout), release, &claimed);
     let mut hardware = signal_hardware_facts(&overlay.trees, profiles);
-    attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities());
+    attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities(), layout.effective_channels());
     let outside_owners = outside_mast_owners(&overlay.trees, &hardware.hosts, &claimed);
     ProposalFacts {
         release_edits: overlay.edits,
@@ -219,7 +232,7 @@ pub async fn preview(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bowties_core::signaling::{SelectedBlock, SignalIndication};
     use bowties_core::layout::channels::{
@@ -254,7 +267,7 @@ mod tests {
         }
     }
 
-    fn detected_block() -> InformationChannel {
+    pub(crate) fn detected_block() -> InformationChannel {
         InformationChannel {
             id: "block-west-yard".to_string(),
             name: "West Yard".to_string(),
@@ -269,7 +282,7 @@ mod tests {
         }
     }
 
-    fn detected_block_tree() -> NodeConfigTree {
+    pub(crate) fn detected_block_tree() -> NodeConfigTree {
         let event = |name: &str, path: Vec<&str>, hex: &str| ConfigNode::Leaf(LeafNode {
             name: name.to_string(),
             description: None,
@@ -355,6 +368,14 @@ mod tests {
         channels: Vec<InformationChannel>,
         tree: Option<NodeConfigTree>,
     ) -> LayoutState {
+        layout_with_facilities(channels, Default::default(), tree)
+    }
+
+    pub(crate) fn layout_with_facilities(
+        channels: Vec<InformationChannel>,
+        facilities: bowties_core::layout::facilities::FacilitiesDocument,
+        tree: Option<NodeConfigTree>,
+    ) -> LayoutState {
         let mut layout = LayoutState::from_loaded(
             PathBuf::from("signal-preview-test"),
             LayoutDirectoryReadData {
@@ -372,7 +393,7 @@ mod tests {
                 pending_changes: vec![],
                 recovery_occurred: false,
                 channels: ChannelsDocument::new(channels),
-                facilities: Default::default(),
+                facilities,
                 load_warnings: vec![],
             },
             Default::default(),

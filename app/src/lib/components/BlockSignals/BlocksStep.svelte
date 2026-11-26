@@ -145,7 +145,7 @@
 
   function chooseBlock(blockId: string): void {
     const block = detectedBlocks.find((candidate) => candidate.blockId === blockId);
-    if (block) void actions.addBlock(block);
+    if (block) void actions.addBlock({ blockId: block.blockId, name: block.name });
     pickerOpen = false;
   }
 </script>

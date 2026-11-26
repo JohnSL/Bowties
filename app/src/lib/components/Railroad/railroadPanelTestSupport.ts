@@ -386,3 +386,62 @@ export function seedSavedBlockSignals() {
     groups: [{ facilityId: SAVED_FACILITY_ID, signalId: `signal:${SAVED_FACILITY_ID}:block:cedar:eastward`, first: 1, length: 1 }],
   }]);
 }
+
+// ── Panel facility (Spec 021) ────────────────────────────────────────────
+
+const PANEL_TEMPLATE = {
+  templateId: 'panel',
+  displayName: 'Panel',
+  slots: [{ label: 'lamps', displayLabel: 'lamps', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: null }],
+  mapping: [],
+};
+
+/**
+ * IPC stubs for the Panel flow: the template list, `panel_wiring_facts` returning `facts`, and
+ * `compose_panel` returning one Lamp Selection edit per requested lamp (row = pin number).
+ */
+export function panelIpc(facts: unknown): IpcStubs {
+  return {
+    list_behavior_templates: () => [
+      { templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] },
+      PANEL_TEMPLATE,
+    ],
+    panel_wiring_facts: () => facts,
+    compose_panel: (args: unknown) => {
+      const { lamps } = (args as { request: { lamps: Array<{ entryId: string; nodeKey: string; output: number }> } }).request;
+      return {
+        edits: lamps.map((lamp) => ({
+          nodeKey: lamp.nodeKey,
+          space: 253,
+          address: 1000 + lamp.output,
+          path: `lamp#${lamp.output}/selection`,
+          value: { type: 'int', value: lamp.output },
+        })),
+        assignments: lamps.map((lamp) => ({ entryId: lamp.entryId, nodeKey: lamp.nodeKey, row: lamp.output })),
+        issues: [],
+      };
+    },
+    sync_layout_drafts: () => undefined,
+    clear_layout_drafts: () => undefined,
+  };
+}
+
+/** Open the Panel editor through + Add facility, then Panel, on the Railroad panel. */
+export async function openPanelEditor(invoke: Invoke, ipc: IpcStubs, name = 'Eagle Creek fascia') {
+  channelsStore.hydrateBaseline(blocks);
+  mockIpc(invoke, ipc);
+  await renderRailroadPanel();
+  await fireEvent.click(screen.getByTestId('add-facility-button'));
+  await fireEvent.click(screen.getByRole('radio', { name: /^Panel/ }));
+  await fireEvent.input(screen.getByLabelText('Name'), { target: { value: name } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add facility' }));
+  return screen.getByRole('dialog', { name });
+}
+
+/** Wire the listed blocks (in panel order) to board pins: select the block, then click its pin. */
+export async function wirePanelBlocks(editor: HTMLElement, wiring: Array<[blockName: string, pin: RegExp]>) {
+  for (const [blockName, pin] of wiring) {
+    await fireEvent.click(within(within(editor).getByRole('listbox', { name: 'Panel blocks' })).getByText(blockName));
+    await fireEvent.click(within(editor).getByRole('button', { name: pin }));
+  }
+}

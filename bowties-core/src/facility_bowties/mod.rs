@@ -455,6 +455,7 @@ mod tests {
             name: "Block 5".to_string(),
             slot_bindings: sb,
             block_signals: None,
+            panel: None,
         }
     }
 
@@ -837,6 +838,7 @@ mod tests {
             name: "ABS".to_string(),
             slot_bindings: BTreeMap::from([("signals".to_string(), vec!["ch-sig".to_string()])]),
             block_signals: None,
+            panel: None,
         };
         let template = crate::behavior_templates::find_template("automatic-block-signals")
             .expect("ABS template registered");

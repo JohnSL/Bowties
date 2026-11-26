@@ -432,3 +432,30 @@ describe('effectiveLayoutStore.isSlotFree', () => {
     expect(effectiveLayoutStore.isSlotFree(NODE_ID, leaf)).toBe(true);
   });
 });
+
+// ─── detectedBlocks ──────────────────────────────────────────────────────────
+
+describe('effectiveLayoutStore.detectedBlocks', () => {
+  it('carries the detector board and the Automatic Block Signals facility that lists the block', async () => {
+    const { channelsStore } = await import('$lib/stores/channels.svelte');
+    const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
+    const { nodeIdToDisplayHex } = await import('$lib/utils/nodeId');
+    channelsStore.setChannels([
+      { id: 'blk-1', name: 'Block 1', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'A', input: 1 } },
+      { id: 'blk-2', name: 'Block 2', role: 'block-occupancy', style: 's', ownership: 'hardware-owned',
+        binding: { kind: 'connectorInput', nodeKey: NODE_ID, connector: 'A', input: 2 } },
+    ]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'abs-1', templateId: 'automatic-block-signals', name: 'Main line', slotBindings: {},
+        blockSignals: { blocks: [{ blockId: 'blk-1' }] },
+      } as never,
+    ]);
+
+    expect(effectiveLayoutStore.detectedBlocks).toEqual([
+      { blockId: 'blk-1', name: 'Block 1', board: nodeIdToDisplayHex(NODE_ID), facility: 'Main line' },
+      { blockId: 'blk-2', name: 'Block 2', board: nodeIdToDisplayHex(NODE_ID), facility: undefined },
+    ]);
+  });
+});

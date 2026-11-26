@@ -18,6 +18,7 @@ import type { BlockSignalsRecord } from '$lib/api/facilities';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
+import { seatPin } from '$lib/utils/pinSeat';
 import { previewRequestFromRecord } from '$lib/utils/blockSignalsPreviewRequest';
 
 export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring';
@@ -312,15 +313,16 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   seatLamp(signalId: string, lamp: 'red' | 'green', output: number): void {
     const choice = this._wiring[signalId];
     if (!choice) return;
-    const pin = lamp === 'red' ? 'redOutput' : 'greenOutput';
-    const other = lamp === 'red' ? 'greenOutput' : 'redOutput';
-    const next = { ...choice };
-    if (choice[pin] === output) next[pin] = null;
-    else {
-      if (choice[other] === output) next[other] = choice[pin];
-      next[pin] = output;
-    }
-    this._wiring = { ...this._wiring, [signalId]: next };
+    const { assignments } = seatPin(
+      { red: choice.redOutput, green: choice.greenOutput },
+      lamp,
+      output,
+      { taken: 'swap' },
+    );
+    this._wiring = {
+      ...this._wiring,
+      [signalId]: { ...choice, redOutput: assignments.red, greenOutput: assignments.green },
+    };
   }
 
   /** Release an untracked owner; the same owner is held once. */

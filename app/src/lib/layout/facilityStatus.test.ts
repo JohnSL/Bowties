@@ -116,3 +116,34 @@ describe('effectiveLayoutStore.facilityStatus (Spec 018 / S6 — D5)', () => {
     expect(effectiveLayoutStore.facilityStatus('f-1')).toBe('Incomplete');
   });
 });
+
+describe('effectiveLayoutStore.panelStatus (Spec 021 / S1)', () => {
+  const panel = (entries: Array<{ entryId: string; blockId: string; lampChannelId?: string }>): Facility => ({
+    facilityId: 'p-1',
+    templateId: 'panel',
+    name: 'Fascia',
+    slotBindings: { lamps: [] },
+    panel: { litWhen: 'occupied', entries },
+  });
+
+  it('is Empty with no entries', () => {
+    facilitiesStore.hydrateBaseline([panel([])]);
+    expect(effectiveLayoutStore.panelStatus('p-1')).toEqual({ status: 'Empty', needsLamp: 0 });
+  });
+
+  it('is Incomplete and counts the entries without a lamp', () => {
+    facilitiesStore.hydrateBaseline([
+      panel([
+        { entryId: 'e1', blockId: 'b1', lampChannelId: 'l1' },
+        { entryId: 'e2', blockId: 'b2' },
+        { entryId: 'e3', blockId: 'b3' },
+      ]),
+    ]);
+    expect(effectiveLayoutStore.panelStatus('p-1')).toEqual({ status: 'Incomplete', needsLamp: 2 });
+  });
+
+  it('is Wired when every entry has a lamp', () => {
+    facilitiesStore.hydrateBaseline([panel([{ entryId: 'e1', blockId: 'b1', lampChannelId: 'l1' }])]);
+    expect(effectiveLayoutStore.panelStatus('p-1')).toEqual({ status: 'Wired', needsLamp: 0 });
+  });
+});
