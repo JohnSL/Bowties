@@ -17,7 +17,7 @@ const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('$lib/api/behaviorTemplates', () => ({ listBehaviorTemplates: listBehaviorTemplatesMock }));
-vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] as Facility[] }));
+vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] as Facility[], composeFacilityRemoval: vi.fn() }));
 vi.mock('$lib/api/channels', () => ({ listChannels: async () => [] }));
 vi.mock('$lib/api/facilityBowties', () => ({ composeFacilityBowties: vi.fn(async () => []) }));
 vi.mock('$lib/api/layout', () => ({
@@ -26,7 +26,6 @@ vi.mock('$lib/api/layout', () => ({
 }));
 vi.mock('$lib/api/signaling', () => ({
   composeBlockSignals: vi.fn(),
-  composeBlockSignalsRemoval: vi.fn(),
   previewBlockSignals: vi.fn(),
 }));
 vi.mock('$lib/api/sync', () => ({
@@ -42,9 +41,10 @@ const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
 const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
 const { blockSignalsEditorStore } = await import('$lib/stores/blockSignalsEditor.svelte');
 const { effectiveNodeStore } = await import('$lib/layout');
-const { composeBlockSignals, composeBlockSignalsRemoval, previewBlockSignals } = await import('$lib/api/signaling');
+const { composeBlockSignals, previewBlockSignals } = await import('$lib/api/signaling');
+const { composeFacilityRemoval } = await import('$lib/api/facilities');
 const editor = await import('$lib/orchestration/blockSignalsEditorOrchestrator');
-const { removeBlockSignalsFacility } = await import('$lib/orchestration/facilityOrchestrator');
+const { removeFacility } = await import('$lib/orchestration/facilityOrchestrator');
 const SaveControls = (await import('$lib/components/ElementCardDeck/SaveControls.svelte')).default;
 const UnsavedChangesDialog = (await import('$lib/components/UnsavedChangesDialog.svelte')).default;
 const FacilitiesSection = (await import('./FacilitiesSection.svelte')).default;
@@ -205,11 +205,11 @@ describe('The only block of a saved facility (E6-T2)', () => {
   });
 
   it('Remove facility drops the facility and its signal channels but keeps the block detection channel', async () => {
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(
+    vi.mocked(composeFacilityRemoval).mockResolvedValue(
       { edits: [], signalResources: [], logicPlacement: [], issues: [] } as never,
     );
 
-    const result = await removeBlockSignalsFacility({ facilityId: FACILITY_ID });
+    const result = await removeFacility({ facilityId: FACILITY_ID });
 
     expect(result).toEqual({ ok: true });
     expect(facilitiesStore.facilities).toHaveLength(0);

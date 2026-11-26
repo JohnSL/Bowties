@@ -22,5 +22,6 @@ export function wiringFacts(owners: Record<number, PinOwner> = {}): PanelWiringF
       { nodeKey: OTHER_BOARD_NODE, name: 'West Signals', pins: pins({}) },
     ],
     issues: [],
+    releaseIssues: [],
   };
 }

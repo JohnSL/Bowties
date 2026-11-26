@@ -18,6 +18,7 @@ vi.mock('$lib/api/behaviorTemplates', () => ({
 }));
 vi.mock('$lib/api/facilities', () => ({
   listFacilities: async () => [] as Facility[],
+  composeFacilityRemoval: vi.fn(),
 }));
 vi.mock('$lib/api/channels', async () => ({
   listChannels: async () => [] as InformationChannel[],
@@ -524,7 +525,7 @@ describe('removeFromSlot triggers teardown BEFORE detach (Spec 018 / S6 — T13)
   });
 });
 
-describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
+describe('removeFacility generic path (Spec 018 / S6 — D2 wrapper)', () => {
   it('tears down bowties then deletes the facility', async () => {
     channelsStore.hydrateBaseline([bod(1), {
       id: 'ch-lamp-2', name: 'Lamp 2', role: 'lamp-indicator', style: 'single-led-direct-lamp',
@@ -537,7 +538,7 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     ]);
     vi.mocked(composeFacilityBowties).mockResolvedValue([]);
 
-    await orch.deleteFacility('f-1');
+    await orch.removeFacility({ facilityId: 'f-1' });
 
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
   });
@@ -551,7 +552,7 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     vi.mocked(composeFacilityBowties).mockResolvedValue([]);
     const removeSpy = vi.spyOn(channelsStore, 'removeUserOwnedChannel');
 
-    await orch.deleteFacility('f-1');
+    await orch.removeFacility({ facilityId: 'f-1' });
 
     expect(removeSpy).toHaveBeenCalledWith('ch-lamp-1');
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
@@ -567,7 +568,7 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     vi.mocked(composeFacilityBowties).mockResolvedValue([]);
     const removeSpy = vi.spyOn(channelsStore, 'removeUserOwnedChannel');
 
-    await orch.deleteFacility('f-1');
+    await orch.removeFacility({ facilityId: 'f-1' });
 
     expect(removeSpy).not.toHaveBeenCalledWith('ch-bod-1');
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
@@ -584,9 +585,9 @@ import { editKeyForLeaf } from '$lib/utils/editKey';
 
 vi.mock('$lib/api/signaling', () => ({
   composeBlockSignals: vi.fn(),
-  composeBlockSignalsRemoval: vi.fn(),
 }));
-const { composeBlockSignals, composeBlockSignalsRemoval } = await import('$lib/api/signaling');
+const { composeBlockSignals } = await import('$lib/api/signaling');
+const { composeFacilityRemoval } = await import('$lib/api/facilities');
 
 vi.mock('$lib/api/sync', () => ({
   listPendingChanges: vi.fn(async () => []),
@@ -728,7 +729,7 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
 
   it('stages nothing when compose reports issues', async () => {
     const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
-    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], logicPlacement: [], issues, claims: [] } as never);
 
     const result = await orch.createBlockSignalsFacility(absArgs());
 
@@ -897,7 +898,7 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
 
   it('stages nothing when compose reports issues', async () => {
     const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
-    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], logicPlacement: [], issues, claims: [] } as never);
 
     const result = await orch.updateBlockSignalsFacility(updateArgs({ name: 'Renamed line' }));
 
@@ -1031,9 +1032,9 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
   });
 });
 
-// ── Spec 020 / E2b — removeBlockSignalsFacility ──
+// ── Spec 020 / E2b — removeFacility on ABS ──
 
-describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)', () => {
+describe('removeFacility on Automatic Block Signals (Spec 020 / E2b — facilityOrchestrator)', () => {
   const RELEASE = {
     edits: [
       { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 0 } },
@@ -1057,8 +1058,8 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
     bowtieMetadataStore.clearAll();
     configChangesStore.clearAllDrafts();
     vi.mocked(syncLayoutDrafts).mockClear();
-    vi.mocked(composeBlockSignalsRemoval).mockReset();
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(RELEASE as never);
+    vi.mocked(composeFacilityRemoval).mockReset();
+    vi.mocked(composeFacilityRemoval).mockResolvedValue(RELEASE as never);
     listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE]);
     behaviorTemplatesStore.reset();
     await behaviorTemplatesStore.loadBehaviorTemplates();
@@ -1080,18 +1081,18 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
   });
 
   it('records the release edits as Pending Changes that carry the facility being removed', async () => {
-    await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+    await orch.removeFacility({ facilityId: 'abs-1' });
 
     // The release's second edit leaves its field unchanged, so only the first is recorded.
     expect(await savedOrigins()).toEqual({ '0x0000000A': { facilityId: 'abs-1' } });
   });
 
   it('stages the release edits and deletes the facility and its signal channels', async () => {
-    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+    const result = await orch.removeFacility({ facilityId: 'abs-1' });
 
     expect(result).toEqual({ ok: true });
     expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(composeBlockSignalsRemoval).mock.invocationCallOrder[0]);
+      .toBeLessThan(vi.mocked(composeFacilityRemoval).mock.invocationCallOrder[0]);
     expect(facilitiesStore.facilities).toHaveLength(0);
     expect(channelsStore.channels).toHaveLength(0);
     expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual([
@@ -1107,11 +1108,11 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
     facilitiesStore.hydrateBaseline(facilitiesStore.facilities, [
       { nodeKey: ABS_NODE, groups: [other, ...SAVED_PLACEMENT.groups] },
     ]);
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(
+    vi.mocked(composeFacilityRemoval).mockResolvedValue(
       { ...RELEASE, logicPlacement: [{ nodeKey: ABS_NODE, groups: [other] }] } as never,
     );
 
-    await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+    await orch.removeFacility({ facilityId: 'abs-1' });
 
     expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: ABS_NODE, groups: [other] }]);
     expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'abs-1' }]);
@@ -1119,9 +1120,9 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
 
   it('stages nothing when the release reports issues', async () => {
     const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
+    vi.mocked(composeFacilityRemoval).mockResolvedValue({ edits: [], logicPlacement: [], issues, claims: [] } as never);
 
-    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+    const result = await orch.removeFacility({ facilityId: 'abs-1' });
 
     expect(result).toEqual({ ok: false, issues });
     expect(facilitiesStore.facilities).toHaveLength(1);
@@ -1130,10 +1131,10 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
   });
 
   it('leaveBoard deletes the facility and channels without composing or staging config edits', async () => {
-    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1', leaveBoard: true });
+    const result = await orch.removeFacility({ facilityId: 'abs-1', leaveBoard: true });
 
     expect(result).toEqual({ ok: true });
-    expect(composeBlockSignalsRemoval).not.toHaveBeenCalled();
+    expect(composeFacilityRemoval).not.toHaveBeenCalled();
     expect(facilitiesStore.facilities).toHaveLength(0);
     expect(channelsStore.channels).toHaveLength(0);
     expect(configChangesStore.draftEntries()).toHaveLength(0);
@@ -1148,7 +1149,7 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
       realApply(k, v);
     });
 
-    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+    const result = await orch.removeFacility({ facilityId: 'abs-1' });
 
     expect(result).toMatchObject({ ok: false });
     expect((result as { error: unknown }).error).toBeInstanceOf(Error);
@@ -1174,7 +1175,7 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
     };
 
     beforeEach(() => {
-      vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(FRESH_RELEASE as never);
+      vi.mocked(composeFacilityRemoval).mockResolvedValue(FRESH_RELEASE as never);
     });
 
     it('stages each fresh event ID leaf as a concrete event ID, distinct per leaf', async () => {
@@ -1193,7 +1194,7 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
         }],
       } as unknown as Parameters<typeof nodeTreeStore.setTree>[1]);
 
-      const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+      const result = await orch.removeFacility({ facilityId: 'abs-1' });
 
       expect(result).toEqual({ ok: true });
       const drafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
@@ -1211,7 +1212,7 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
       nodeTreeStore.reset();
       configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
 
-      const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+      const result = await orch.removeFacility({ facilityId: 'abs-1' });
 
       expect(result).toMatchObject({ ok: false });
       expect(facilitiesStore.facilities).toHaveLength(1);
@@ -1222,20 +1223,12 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
     });
   });
 
-  it('generic deleteFacility routes an ABS facility through the release', async () => {
-    await orch.deleteFacility('abs-1');
+  it('removeFacility routes an ABS facility through the release', async () => {
+    await orch.removeFacility({ facilityId: 'abs-1' });
 
-    expect(composeBlockSignalsRemoval).toHaveBeenCalledWith('abs-1');
+    expect(composeFacilityRemoval).toHaveBeenCalledWith('abs-1');
     expect(facilitiesStore.facilities).toHaveLength(0);
     expect(configChangesStore.draftEntries()).toHaveLength(2);
-  });
-
-  it('generic deleteFacility throws and stages nothing when the ABS release is refused', async () => {
-    const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
-
-    await expect(orch.deleteFacility('abs-1')).rejects.toBeInstanceOf(orch.BlockSignalsRemovalError);
-    expect(facilitiesStore.facilities).toHaveLength(1);
   });
 });
 
@@ -1413,6 +1406,12 @@ describe('createPanelFacility (Spec 021 — facilityOrchestrator)', () => {
     });
   });
 
+  it('passes the released owners to compose', async () => {
+    const release = [{ nodeKey: BOARD, owner: 'Direct lamp 3' }];
+    await orch.createPanelFacility({ ...panelArgs(), release });
+    expect(vi.mocked(composePanel).mock.calls[0][0].release).toEqual(release);
+  });
+
   it('stages nothing when compose reports issues', async () => {
     const issues = [{ code: 'pinOwnedElsewhere', entryId: 'e1', nodeKey: BOARD, output: 9, detail: 'busy' }];
     vi.mocked(composePanel).mockResolvedValue({ edits: [], assignments: [], issues } as never);
@@ -1444,3 +1443,276 @@ describe('createPanelFacility (Spec 021 — facilityOrchestrator)', () => {
     expect(configChangesStore.draftEntries()).toEqual([]);
   });
 });
+
+describe('updatePanelFacility (Spec 021 S4 — facilityOrchestrator)', () => {
+  const PANEL_TEMPLATE: BehaviorTemplate = {
+    templateId: 'panel',
+    displayName: 'Panel',
+    slots: [
+      { label: 'lamps', displayLabel: 'lamps', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: null },
+    ],
+    mapping: [],
+  };
+  const BOARD = '050101018800';
+  const OTHER_BOARD = '050101018801';
+
+  function lampChannel(id: string, name: string, nodeKey: string, rowOrdinal: number): InformationChannel {
+    return {
+      id, name, role: 'lamp-indicator', style: 'single-led-direct-lamp', ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey, rowOrdinal },
+    } as InformationChannel;
+  }
+
+  const EDITS = [9, 5, 7].map((row) => ({
+    nodeKey: BOARD, space: 253, address: row * 16, path: `lamp${row}`, value: { type: 'int', value: row },
+  }));
+  const COMPOSED = {
+    edits: EDITS,
+    assignments: [
+      { entryId: 'e1', nodeKey: BOARD, row: 9 },
+      { entryId: 'e2', nodeKey: OTHER_BOARD, row: 5 },
+      { entryId: 'e4', nodeKey: BOARD, row: 7 },
+    ],
+    issues: [],
+  };
+
+  function updateArgs(): Parameters<typeof orch.updatePanelFacility>[0] {
+    return {
+      facilityId: 'panel-1',
+      name: 'Yard panel',
+      record: {
+        litWhen: 'clear',
+        entries: [
+          { entryId: 'e1', blockId: 'b1' },
+          { entryId: 'e2', blockId: 'b2' },
+          { entryId: 'e3', blockId: 'b3' },
+          { entryId: 'e4', blockId: 'b4' },
+        ],
+      },
+      lamps: [
+        { entryId: 'e1', nodeKey: BOARD, output: 9, name: 'Lamp 1 renamed' },
+        { entryId: 'e2', nodeKey: OTHER_BOARD, output: 5, name: 'Lamp 2' },
+        { entryId: 'e4', nodeKey: BOARD, output: 7, name: 'Lamp 4' },
+      ],
+    };
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    channelsStore.hydrateBaseline([
+      lampChannel('ch-l1', 'Lamp 1', BOARD, 9),
+      lampChannel('ch-l2', 'Lamp 2', BOARD, 3),
+      lampChannel('ch-l3', 'Lamp 3', BOARD, 14),
+    ]);
+    facilitiesStore.hydrateBaseline([{
+      facilityId: 'panel-1',
+      templateId: 'panel',
+      name: 'Tower panel',
+      slotBindings: { lamps: ['ch-l1', 'ch-l2', 'ch-l3'] },
+      panel: {
+        litWhen: 'occupied',
+        entries: [
+          { entryId: 'e1', blockId: 'b1', lampChannelId: 'ch-l1' },
+          { entryId: 'e2', blockId: 'b2', lampChannelId: 'ch-l2' },
+          { entryId: 'e3', blockId: 'b3', lampChannelId: 'ch-l3' },
+        ],
+      },
+    } as never]);
+    vi.mocked(composePanel).mockReset();
+    vi.mocked(composePanel).mockResolvedValue(COMPOSED as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, PANEL_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('keeps, renames and rebinds saved lamps, creates new ones, drops removed ones, and stages the edits', async () => {
+    const result = await orch.updatePanelFacility(updateArgs());
+
+    expect(result).toEqual({ ok: true });
+    const channels = channelsStore.channels;
+    const byId = (id: string) => channels.find((c) => c.id === id);
+    expect(byId('ch-l1')?.name).toBe('Lamp 1 renamed');
+    expect(byId('ch-l1')?.binding).toEqual({ kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 9 });
+    expect(byId('ch-l2')?.binding).toEqual({ kind: 'lampRow', nodeKey: OTHER_BOARD, rowOrdinal: 5 });
+    expect(byId('ch-l3')).toBeUndefined();
+    const created = channels.find((c) => !['ch-l1', 'ch-l2'].includes(c.id))!;
+    expect(created).toMatchObject({ name: 'Lamp 4', role: 'lamp-indicator', ownership: 'user-owned' });
+    expect(created.binding).toEqual({ kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 7 });
+    expect(channels).toHaveLength(3);
+
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'panel-1')!;
+    expect(facility.name).toBe('Yard panel');
+    expect(facility.slotBindings.lamps).toEqual(['ch-l1', 'ch-l2', created.id]);
+    expect(facility.panel?.litWhen).toBe('clear');
+    expect(facility.panel?.entries.map((e) => e.lampChannelId)).toEqual(['ch-l1', 'ch-l2', undefined, created.id]);
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual(
+      EDITS.map((e) => editKeyForLeaf(BOARD, e.space, e.address)),
+    );
+  });
+
+  it('passes the released owners to compose, and sends none when there are none', async () => {
+    const release = [{ nodeKey: BOARD, owner: 'Direct lamp 3' }];
+    await orch.updatePanelFacility({ ...updateArgs(), release });
+    expect(vi.mocked(composePanel).mock.calls[0][0].release).toEqual(release);
+
+    vi.mocked(composePanel).mockClear();
+    await orch.updatePanelFacility({ ...updateArgs(), release: [] });
+    expect(vi.mocked(composePanel).mock.calls[0][0]).not.toHaveProperty('release');
+  });
+
+  it('stages nothing when compose reports issues', async () => {
+    const issues = [{ code: 'pinOwnedElsewhere', entryId: 'e1', nodeKey: BOARD, output: 9, detail: 'busy' }];
+    vi.mocked(composePanel).mockResolvedValue({ edits: [], assignments: [], issues } as never);
+
+    const result = await orch.updatePanelFacility(updateArgs());
+
+    expect(result).toEqual({ ok: false, issues });
+    expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-l1', 'ch-l2', 'ch-l3']);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    expect(configChangesStore.draftEntries()).toEqual([]);
+  });
+
+  it('restores every store exactly when staging an edit fails', async () => {
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.updatePanelFacility(updateArgs());
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: unknown }).error).toBeInstanceOf(Error);
+    expect(channelsStore.channels.map((c) => [c.id, c.name, c.binding])).toEqual([
+      ['ch-l1', 'Lamp 1', { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 9 }],
+      ['ch-l2', 'Lamp 2', { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 3 }],
+      ['ch-l3', 'Lamp 3', { kind: 'lampRow', nodeKey: BOARD, rowOrdinal: 14 }],
+    ]);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'panel-1')!;
+    expect(facility.name).toBe('Tower panel');
+    expect(facility.slotBindings.lamps).toEqual(['ch-l1', 'ch-l2', 'ch-l3']);
+    expect(configChangesStore.draftEntries()).toEqual([]);
+  });
+});
+
+
+describe('previewFacilityRemoval and removeFacility for a Panel (Spec 021 S4 — facilityOrchestrator)', () => {
+  const PANEL_TEMPLATE: BehaviorTemplate = {
+    templateId: 'panel',
+    displayName: 'Panel',
+    slots: [
+      { label: 'lamps', displayLabel: 'lamps', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: null },
+    ],
+    mapping: [],
+  };
+  const BOARD = '050101018800';
+  const CLAIMS = [
+    { nodeKey: BOARD, kind: 'directLamp' as const, index: 9, lampSelection: 3 },
+    { nodeKey: BOARD, kind: 'directLamp' as const, index: 3, lampSelection: null },
+  ];
+  const REMOVAL = {
+    edits: [
+      { nodeKey: BOARD, space: 253, address: 144, path: 'lamp9', value: { type: 'int', value: 0 } },
+      { nodeKey: BOARD, space: 253, address: 48, path: 'lamp3', value: { type: 'int', value: 0 } },
+    ],
+    logicPlacement: [] as never[],
+    issues: [] as never[],
+    claims: CLAIMS,
+  };
+
+  function lampChannel(id: string, rowOrdinal: number): InformationChannel {
+    return {
+      id, name: id, role: 'lamp-indicator', style: 'single-led-direct-lamp', ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: BOARD, rowOrdinal },
+    } as InformationChannel;
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(composeFacilityRemoval).mockReset();
+    vi.mocked(composeFacilityRemoval).mockResolvedValue(REMOVAL as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE, PANEL_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+    channelsStore.hydrateBaseline([
+      lampChannel('ch-l1', 9),
+      lampChannel('ch-l2', 3),
+      {
+        id: 'ch-sig-1', name: 'Signal A', role: 'signal-indication', style: 'two-driver-rg-signal',
+        ownership: 'user-owned',
+        binding: { kind: 'signalLccRgOutputs', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 },
+      } as InformationChannel,
+    ]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'panel-1', templateId: 'panel', name: 'Tower panel',
+        slotBindings: { lamps: ['ch-l1', 'ch-l2'] },
+        panel: {
+          litWhen: 'occupied',
+          entries: [
+            { entryId: 'e1', blockId: 'b1', lampChannelId: 'ch-l1' },
+            { entryId: 'e2', blockId: 'b2', lampChannelId: 'ch-l2' },
+          ],
+        },
+      },
+      {
+        facilityId: 'abs-1', templateId: 'automatic-block-signals', name: 'Main line',
+        slotBindings: { signals: ['ch-sig-1'] },
+        blockSignals: {
+          direction: 'bidirectional', movements: 'both', entranceEnd: 'a', exitEnd: 'b',
+          blocks: [{ blockId: 'b1' }], settings: {},
+          signals: [{
+            signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1',
+            resources: { nodeKey: ABS_NODE, mast: 9, trackCircuits: [] },
+          }],
+        },
+      },
+    ] as never[]);
+  });
+
+  it('previews the claims without staging anything', async () => {
+    const preview = await orch.previewFacilityRemoval('panel-1');
+
+    expect(preview).toEqual({ ok: true, claims: CLAIMS, issues: [] });
+    expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(composeFacilityRemoval).mock.invocationCallOrder[0]);
+    expect(facilitiesStore.facilities).toHaveLength(2);
+    expect(channelsStore.channels).toHaveLength(3);
+    expect(configChangesStore.draftEntries()).toEqual([]);
+  });
+
+  it('confirming stages the resets, removes the facility and its lamp channels, and leaves other facilities alone', async () => {
+    const result = await orch.removeFacility({ facilityId: 'panel-1', previewedClaims: CLAIMS });
+
+    expect(result).toEqual({ ok: true });
+    expect(facilitiesStore.facilities.map((f) => f.facilityId)).toEqual(['abs-1']);
+    expect(facilitiesStore.facilities[0].blockSignals?.blocks).toEqual([{ blockId: 'b1' }]);
+    expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-sig-1']);
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual(
+      REMOVAL.edits.map((e) => editKeyForLeaf(BOARD, e.space, e.address)),
+    );
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'panel-1' }]);
+  });
+
+  it('refuses with a plan-changed error and stages nothing when the claims differ from the preview', async () => {
+    const changed = { ...REMOVAL, claims: [...CLAIMS, { nodeKey: BOARD, kind: 'directLamp' as const, index: 11, lampSelection: null }] };
+    vi.mocked(composeFacilityRemoval).mockResolvedValue(changed as never);
+
+    const result = await orch.removeFacility({ facilityId: 'panel-1', previewedClaims: CLAIMS });
+
+    expect(result).toEqual({ ok: false, planChanged: true });
+    expect(facilitiesStore.facilities).toHaveLength(2);
+    expect(channelsStore.channels).toHaveLength(3);
+    expect(configChangesStore.draftEntries()).toEqual([]);
+  });
+});
+

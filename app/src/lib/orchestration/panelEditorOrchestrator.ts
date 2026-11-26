@@ -1,6 +1,8 @@
 import { panelWiringFacts, type PanelWiringPin } from '$lib/api/panels';
 import type { SelectedDetectedBlock } from '$lib/api/signaling';
-import { createPanelFacility, syncDraftsForComposition } from '$lib/orchestration/facilityOrchestrator';
+import { createPanelFacility, syncDraftsForComposition, updatePanelFacility } from '$lib/orchestration/facilityOrchestrator';
+import { effectiveLayoutStore } from '$lib/layout';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { panelEditorStore as store, type PanelEditorStep } from '$lib/stores/panelEditor.svelte';
 
 /**
@@ -17,6 +19,25 @@ class PanelEditorOrchestrator {
   start(name: string): void {
     this.requestGeneration += 1;
     store.start(name);
+  }
+
+  /** Open the editor on a saved panel's effective state (each lamp's pin is its row's Lamp Selection). */
+  startEdit(facilityId: string): void {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    const record = facility?.panel;
+    if (!facility || !record) return;
+    this.requestGeneration += 1;
+    store.startEdit({
+      facilityId,
+      name: facility.name,
+      litWhen: record.litWhen,
+      entries: effectiveLayoutStore.panelCardEntries(facilityId).map((e) => ({
+        entryId: e.entryId,
+        blockId: e.blockId,
+        blockName: e.blockName,
+        ...(e.lamp && e.lamp.pin !== null ? { lamp: { nodeKey: e.lamp.nodeKey, output: e.lamp.pin } } : {}),
+      })),
+    });
   }
 
   addBlock(block: SelectedDetectedBlock): void {
@@ -51,16 +72,29 @@ class PanelEditorOrchestrator {
     const { owner } = pin;
     const ownPanel = owner.kind === 'panel' && owner.facilityId === store.facilityId;
     if (owner.kind === 'outside') {
-      store.setMessage({
-        kind: 'warn',
-        text: `${pin.label} is in use by "${owner.description}" outside Bowties and cannot be used here.`,
+      store.setPendingRelease({
+        owner: { nodeKey, owner: owner.row === null ? owner.description : `Direct lamp ${owner.row}` },
+        nodeKey,
+        output,
+        description: owner.description,
       });
       return;
     }
+    store.setPendingRelease(null);
     if (owner.kind === 'facility' || (owner.kind === 'panel' && !ownPanel)) return;
 
     store.seatLamp(entry.entryId, nodeKey, output);
     store.setMessage(undefined);
+  }
+
+  /** Release the pending outside owner, seat the lamp on its pin, and re-read facts with the release. */
+  async confirmRelease(): Promise<void> {
+    const pending = store.pendingRelease;
+    const entryId = store.selectedEntryId;
+    if (!pending || !entryId) return;
+    store.releaseAndSeat(entryId, pending.owner, pending.nodeKey, pending.output);
+    store.setMessage(undefined);
+    await this.refreshFacts();
   }
 
   /** Create the panel from the editor's input; the editor closes only on success. */
@@ -69,9 +103,11 @@ class PanelEditorOrchestrator {
     this.finishing = true;
     const generation = ++this.requestGeneration;
     try {
-      const result = await createPanelFacility({
+      const save = store.mode === 'edit' ? updatePanelFacility : createPanelFacility;
+      const result = await save({
         facilityId: store.facilityId,
         name: store.name,
+        release: store.releases,
         record: {
           litWhen: store.litWhen,
           entries: store.entries.map((e) => ({ entryId: e.entryId, blockId: e.blockId })),
@@ -118,14 +154,32 @@ class PanelEditorOrchestrator {
     const generation = ++this.requestGeneration;
     try {
       await syncDraftsForComposition();
-      const facts = await panelWiringFacts();
-      if (generation !== this.requestGeneration) return;
-      store.acceptFacts(facts.boards);
-      if (!store.boardNodeKey) store.setBoard(facts.boards[0]?.nodeKey);
+      await this.readFacts(generation);
     } catch (error) {
-      if (generation === this.requestGeneration) {
-        store.setFinishError(error instanceof Error ? error.message : String(error));
-      }
+      this.failFacts(generation, error);
+    }
+  }
+
+  /** Re-read facts with the releases chosen so far; the newest request wins. */
+  private async refreshFacts(): Promise<void> {
+    const generation = ++this.requestGeneration;
+    try {
+      await this.readFacts(generation);
+    } catch (error) {
+      this.failFacts(generation, error);
+    }
+  }
+
+  private async readFacts(generation: number): Promise<void> {
+    const facts = await panelWiringFacts(undefined, store.releases);
+    if (generation !== this.requestGeneration) return;
+    store.acceptFacts(facts.boards, facts.releaseIssues);
+    if (!store.boardNodeKey) store.setBoard(facts.boards[0]?.nodeKey);
+  }
+
+  private failFacts(generation: number, error: unknown): void {
+    if (generation === this.requestGeneration) {
+      store.setFinishError(error instanceof Error ? error.message : String(error));
     }
   }
 }
@@ -136,12 +190,14 @@ const o = panelEditorOrchestrator;
 /** The intents the Panel editor components emit. */
 export const panelEditorActions = {
   startPanelEditor: (name: string): void => o.start(name),
+  startPanelEdit: (facilityId: string): void => o.startEdit(facilityId),
   addBlock: (block: SelectedDetectedBlock): void => o.addBlock(block),
   removeEntry: (entryId: string): void => o.removeEntry(entryId),
   goTo: (step: PanelEditorStep): Promise<void> => o.goTo(step),
   selectEntry: (entryId: string): void => o.selectEntry(entryId),
   chooseBoard: (nodeKey: string): void => o.chooseBoard(nodeKey),
   pinClick: (nodeKey: string, output: number): void => o.pinClick(nodeKey, output),
+  confirmRelease: (): Promise<void> => o.confirmRelease(),
   finish: (): Promise<void> => o.finish(),
   cancel: (): void => o.cancel(),
 };

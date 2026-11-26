@@ -41,3 +41,14 @@ pub async fn list_facilities(
     let doc: FacilitiesDocument = bowties_core::layout::read_facilities(layout_dir)?;
     Ok(FacilitiesListing { facilities: doc.facilities, logic_placement: doc.logic_placement })
 }
+
+/// Read-only: the edits that return every slot a facility claims to its unused
+/// state (kind-agnostic), the board placement without its Logic groups, and the
+/// claims they came from. Writes nothing; the caller stages the edits.
+#[tauri::command]
+pub async fn compose_facility_removal(
+    state: tauri::State<'_, AppState>,
+    facility_id: String,
+) -> Result<crate::signaling::compose::ComposeFacilityRemovalResponse, String> {
+    crate::signaling::compose::compose_removal(state.inner(), &facility_id).await
+}

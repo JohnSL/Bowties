@@ -5,7 +5,7 @@
  * LCC boards is staged through `facilityOrchestrator`, saved through the
  * Pending Changes pipeline (rows carry `origin.facilityId`), and then one board
  * fails to write. Only the IPC boundary is mocked; the stores, orchestrators and
- * `FacilitiesSection` / `FacilityCard` / `BlockSignalsRemoveDialog` are real.
+ * `FacilitiesSection` / `FacilityCard` / `FacilityRemoveDialog` are real.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
@@ -15,7 +15,7 @@ import type { PendingChangeRow } from '$lib/api/sync';
 
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
 vi.mock('$lib/api/behaviorTemplates', () => ({ listBehaviorTemplates: listBehaviorTemplatesMock }));
-vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] as Facility[] }));
+vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] as Facility[], composeFacilityRemoval: vi.fn() }));
 vi.mock('$lib/api/channels', () => ({ listChannels: async () => [] }));
 vi.mock('$lib/api/facilityBowties', () => ({ composeFacilityBowties: vi.fn(async () => []) }));
 vi.mock('$lib/api/layout', () => ({
@@ -24,7 +24,6 @@ vi.mock('$lib/api/layout', () => ({
 }));
 vi.mock('$lib/api/signaling', () => ({
   composeBlockSignals: vi.fn(),
-  composeBlockSignalsRemoval: vi.fn(),
 }));
 vi.mock('$lib/api/sync', () => ({
   listPendingChanges: vi.fn(async () => []),
@@ -38,6 +37,7 @@ const { behaviorTemplatesStore } = await import('$lib/stores/behaviorTemplates.s
 const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
 const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
 const { composeBlockSignals } = await import('$lib/api/signaling');
+const { composeFacilityRemoval } = await import('$lib/api/facilities');
 const { listPendingChanges, setPendingChange } = await import('$lib/api/sync');
 const orch = await import('$lib/orchestration/facilityOrchestrator');
 const { stageConfigDraftsAsPendingChanges } = await import('$lib/orchestration/configDraftOrchestrator');
@@ -158,12 +158,20 @@ describe('Signals across two boards (E5-T1)', () => {
   it('names both boards in the Remove dialog', async () => {
     await stageTwoBoardFacility();
 
+    const claim = (nodeKey: string, kind: string, index: number) => ({ nodeKey, kind, index, lampSelection: null });
+    vi.mocked(composeFacilityRemoval).mockResolvedValue({
+      edits: [], logicPlacement: [], issues: [],
+      claims: [
+        claim(WEST, 'mast', 1), claim(WEST, 'logic', 1), claim(WEST, 'logic', 2), claim(WEST, 'trackCircuit', 1),
+        claim(EAST, 'mast', 2), claim(EAST, 'logic', 4),
+      ],
+    } as never);
+
     render(FacilitiesSection, { props: {} });
     await fireEvent.click(screen.getByRole('button', { name: 'Delete facility' }));
 
-    const dialog = screen.getByRole('alertdialog', { name: /Remove Cedar Hill\?/ });
-    expect(within(dialog).getByText(
-      new RegExp(`Mast 1, Logic 1, Logic 2 and Track Circuit 1 on ${WEST_DISPLAY}, and Mast 2 and Logic 4 on ${EAST_DISPLAY}`),
-    )).toBeInTheDocument();
+    const dialog = await screen.findByRole('alertdialog', { name: /Remove Cedar Hill\?/ });
+    expect(within(dialog).getByText(`On ${WEST_DISPLAY}: resets Mast 1, Logic 1, Logic 2 and Track Circuit 1`)).toBeInTheDocument();
+    expect(within(dialog).getByText(`On ${EAST_DISPLAY}: resets Mast 2 and Logic 4`)).toBeInTheDocument();
   });
 });

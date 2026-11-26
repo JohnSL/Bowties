@@ -78,3 +78,56 @@ describe('panelEditorStore blocks step', () => {
     expect(store.name).toBe('');
   });
 });
+
+describe('panelEditorStore edit mode', () => {
+  beforeEach(() => store.reset());
+
+  it('startEdit keeps the facility id, opens in edit mode on Blocks with entries and lamps filled', () => {
+    store.startEdit({
+      facilityId: 'fac-1',
+      name: 'Saved panel',
+      litWhen: 'occupied',
+      entries: [
+        { entryId: 'e1', blockId: 'block:a', blockName: 'Block A', lamp: { nodeKey: 'node1', output: 9 } },
+        { entryId: 'e2', blockId: 'block:b', blockName: 'Block B' },
+      ],
+    });
+    expect(store.open).toBe(true);
+    expect(store.mode).toBe('edit');
+    expect(store.facilityId).toBe('fac-1');
+    expect(store.name).toBe('Saved panel');
+    expect(store.step).toBe('blocks');
+    expect(store.lampFor('e1')).toEqual({ nodeKey: 'node1', output: 9 });
+    expect(store.lampFor('e2')).toBeNull();
+    expect(store.entries.map((e) => e.entryId)).toEqual(['e1', 'e2']);
+  });
+
+  it('start opens in create mode', () => {
+    store.start('P');
+    expect(store.mode).toBe('create');
+  });
+});
+
+describe('panelEditorStore release', () => {
+  beforeEach(() => store.reset());
+  const owner = { nodeKey: 'node1', owner: 'Direct lamp 4' };
+
+  it('releaseAndSeat records the release once and seats the lamp; start, startEdit and reset clear releases', () => {
+    store.start('P');
+    store.addBlock(A);
+    const [a] = store.entries;
+    store.releaseAndSeat(a.entryId, owner, 'node1', 10);
+    expect(store.releases).toEqual([owner]);
+    expect(store.lampFor(a.entryId)).toEqual({ nodeKey: 'node1', output: 10 });
+
+    store.start('Q');
+    expect(store.releases).toEqual([]);
+    store.addBlock(A);
+    store.releaseAndSeat(store.entries[0].entryId, owner, 'node1', 10);
+    store.startEdit({ facilityId: 'f', name: 'n', litWhen: 'occupied', entries: [{ entryId: 'e', blockId: 'b', blockName: 'B' }] });
+    expect(store.releases).toEqual([]);
+    store.releaseAndSeat('e', owner, 'node1', 10);
+    store.reset();
+    expect(store.releases).toEqual([]);
+  });
+});

@@ -1,4 +1,4 @@
-//! `compose_block_signals` IPC boundary: gathers compiler facts from the
+//! `compose_block_signals` and facility-removal composition: IPC boundary: gathers compiler facts from the
 //! effective layout (ADR-0015), compiles, and resolves the generated edits to
 //! memory locations. Read-only: no drafts, claims, configuration writes or bus
 //! activity. Pure fact extraction and path resolution live in
@@ -7,9 +7,8 @@
 use std::collections::HashMap;
 
 use bowties_core::{
-    layout::{facilities::NodeLogicPlacement, state::LayoutState},
-    node_key::NodeKey,
-    node_tree::NodeConfigTree,
+    layout::{facilities::{ClaimedSlotKind, NodeLogicPlacement}, state::LayoutState},
+    node_tree::ConfigValue,
     profile::StructureProfile,
     signaling::{
         compiler::{
@@ -25,7 +24,7 @@ use bowties_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{occupancy_events, proposal_facts_from_layout, saved_signals_from_layout};
+use super::{index_effective_trees, occupancy_events, proposal_facts_from_layout, saved_signals_from_layout};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -34,10 +33,6 @@ pub struct ComposeBlockSignalsRequest {
     /// The facility being composed; its own claimed slots do not count as in use.
     #[serde(default)]
     pub facility_id: Option<String>,
-    /// Removal mode: release the facility's claimed slots instead of compiling
-    /// a recipe. Needs `facility_id`; `line` and `wiring` are ignored.
-    #[serde(default)]
-    pub remove: bool,
     #[serde(default)]
     pub line: BlockSignalsRequest,
     #[serde(default)]
@@ -77,9 +72,6 @@ fn compose_from_layout(
     profiles: &HashMap<String, Option<StructureProfile>>,
     mut request: ComposeBlockSignalsRequest,
 ) -> Result<ComposeBlockSignalsResponse, String> {
-    if request.remove {
-        return release_from_layout(layout, profiles, request.facility_id.as_deref());
-    }
     request.line.saved_signals = request
         .facility_id
         .as_deref()
@@ -112,21 +104,17 @@ fn compose_from_layout(
     let occupancy: Vec<BlockOccupancyEvents> =
         request.line.blocks.iter().map(|block| occupancy_events(&facts, &block.block_id)).collect();
 
-    let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
     // A release's edits and a dropped signal's resets must resolve too, so
     // their nodes' trees are indexed even when no signal is wired there.
-    let node_keys = request
-        .wiring
-        .iter()
-        .map(|w| &w.node_key)
-        .chain(request.release.iter().map(|r| &r.node_key))
-        .chain(saved_resources.iter().map(|r| &r.resources.node_key));
-    for node_key in node_keys {
-        let key = NodeKey::parse(node_key).map_err(|e| format!("Invalid node key '{node_key}': {e}"))?;
-        if let Some(tree) = facts.trees.get(&key) {
-            trees.insert(node_key.clone(), tree);
-        }
-    }
+    let trees = index_effective_trees(
+        &facts,
+        request
+            .wiring
+            .iter()
+            .map(|w| &w.node_key)
+            .chain(request.release.iter().map(|r| &r.node_key))
+            .chain(saved_resources.iter().map(|r| &r.resources.node_key)),
+    )?;
     let indexes: HashMap<String, LeafPathIndex<'_>> =
         trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
 
@@ -162,36 +150,66 @@ fn compose_from_layout(
     Ok(ComposeBlockSignalsResponse { edits, signal_resources, logic_placement, issues })
 }
 
-/// Removal mode: the edits that release the saved facility's masts and placed
-/// Logic, built from the effective trees of the nodes that hold them, and each
-/// affected board's placement without the facility's groups.
-fn release_from_layout(
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FacilityRemovalClaim {
+    pub node_key: String,
+    pub kind: &'static str,
+    pub index: u32,
+    pub lamp_selection: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposeFacilityRemovalResponse {
+    pub edits: Vec<ResolvedEdit>,
+    pub logic_placement: Vec<NodeLogicPlacement>,
+    pub issues: Vec<CompileIssue>,
+    pub claims: Vec<FacilityRemovalClaim>,
+}
+
+pub async fn compose_removal(state: &AppState, facility_id: &str) -> Result<ComposeFacilityRemovalResponse, String> {
+    let layout = state.layout_state.read().await;
+    let Some(layout) = layout.as_ref() else {
+        return Err("No layout is open.".to_string());
+    };
+    let profiles = state.profiles.read().await;
+    compose_removal_from_layout(layout, &profiles, facility_id)
+}
+
+fn claim_kind_name(kind: ClaimedSlotKind) -> &'static str {
+    match kind {
+        ClaimedSlotKind::Mast => "mast",
+        ClaimedSlotKind::Logic => "logic",
+        ClaimedSlotKind::TrackCircuit => "trackCircuit",
+        ClaimedSlotKind::DirectLamp => "directLamp",
+    }
+}
+
+/// Facility removal, whatever its kind: the edits that return every slot the
+/// facility claims (masts, placed Logic, Track Circuits, panel Direct Lamp rows)
+/// to its unused state, built from the effective trees of the nodes that hold
+/// them, each affected board's placement without the facility's groups, and the
+/// claim list the edits were derived from (a Direct Lamp row carries its
+/// effective Lamp Selection).
+pub fn compose_removal_from_layout(
     layout: &LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
-    facility_id: Option<&str>,
-) -> Result<ComposeBlockSignalsResponse, String> {
-    let facility_id = facility_id.ok_or("Removal needs a facility id.")?;
+    facility_id: &str,
+) -> Result<ComposeFacilityRemovalResponse, String> {
     let doc = layout.effective_facilities();
-    doc.facilities
-        .iter()
-        .find(|f| f.facility_id == facility_id)
-        .and_then(|f| f.block_signals.as_ref())
-        .ok_or_else(|| format!("No Automatic Block Signals facility '{facility_id}' is saved."))?;
-    let claims = facility_claimed_slots(doc, layout.effective_channels(), facility_id);
+    if !doc.facilities.iter().any(|f| f.facility_id == facility_id) {
+        return Err(format!("No facility '{facility_id}' is saved."));
+    }
+    let claimed = facility_claimed_slots(doc, layout.effective_channels(), facility_id);
     let facts = proposal_facts_from_layout(layout, profiles, &[]);
 
-    let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
-    for claim in &claims {
-        let key = NodeKey::parse(&claim.node_key).map_err(|e| format!("Invalid node key '{}': {e}", claim.node_key))?;
-        if let Some(tree) = facts.trees.get(&key) {
-            trees.insert(claim.node_key.clone(), tree);
-        }
-    }
+    let trees = index_effective_trees(&facts, claimed.iter().map(|c| &c.node_key))?;
     let indexes: HashMap<String, LeafPathIndex<'_>> =
         trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
     let nodes: Vec<_> = trees.iter().map(|(node_key, tree)| node_slot_facts(node_key, tree, &[])).collect();
 
-    let targets: Vec<_> = claims.iter().map(ReleaseTarget::from).collect();
+    let targets: Vec<_> = claimed.iter().map(ReleaseTarget::from).collect();
     let released = release_slots(&targets, &nodes);
     let edits = resolve_edits(&indexes, &released.edits).map_err(|e| e.to_string())?;
     let logic_placement = if released.issues.is_empty() {
@@ -206,12 +224,26 @@ fn release_from_layout(
     } else {
         Vec::new()
     };
-    Ok(ComposeBlockSignalsResponse {
-        edits,
-        signal_resources: Vec::new(),
-        logic_placement,
-        issues: released.issues,
-    })
+    let claims = claimed
+        .iter()
+        .map(|claim| {
+            let lamp_selection = (claim.kind == ClaimedSlotKind::DirectLamp)
+                .then(|| indexes.get(&claim.node_key))
+                .flatten()
+                .and_then(|index| index.leaf(&format!("Direct Lamp Control/Lamp[{}]/Lamp Selection", claim.index)))
+                .and_then(|leaf| match &leaf.value {
+                    Some(ConfigValue::Int { value }) if *value != 0 => Some(*value),
+                    _ => None,
+                });
+            FacilityRemovalClaim {
+                node_key: claim.node_key.clone(),
+                kind: claim_kind_name(claim.kind),
+                index: claim.index,
+                lamp_selection,
+            }
+        })
+        .collect();
+    Ok(ComposeFacilityRemovalResponse { edits, logic_placement, issues: released.issues, claims })
 }
 
 #[cfg(test)]
@@ -219,6 +251,62 @@ mod tests {
     use super::*;
     use crate::panel::fixtures::*;
     use bowties_core::signaling::SignalOutputOwner;
+
+    fn lamp_path(row: u32) -> String {
+        format!("Direct Lamp Control/Lamp[{row}]/")
+    }
+
+    #[test]
+    fn removing_a_panel_resets_exactly_its_claimed_lamp_rows_and_lists_them() {
+        let mut tree = signal_lcc_tree();
+        set_int(&mut tree, "Direct Lamp Control/Lamp[2]/Lamp Selection", 3);
+        set_int(&mut tree, "Direct Lamp Control/Lamp[3]/Lamp Selection", 0);
+        set_int(&mut tree, "Direct Lamp Control/Lamp[4]/Lamp Selection", 5);
+        set_int(&mut tree, &mast_processing(1), 1);
+        let layout = layout(
+            tree,
+            vec![lamp_channel("l2", 2), lamp_channel("l3", 3), lamp_channel("l4", 4)],
+            vec![
+                panel_facility("pnl-1", "Yard", &["l2", "l3"]),
+                panel_facility("pnl-2", "Depot", &["l4"]),
+                abs_facility("abs-1", "Main", 1),
+            ],
+        );
+
+        let out = compose_removal_from_layout(&layout, &profiles(), "pnl-1").unwrap();
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        assert!(out.logic_placement.is_empty());
+        assert!(out.edits.iter().any(|e| e.path.starts_with(&lamp_path(2))), "{:?}", out.edits);
+        assert!(
+            out.edits.iter().all(|e| e.path.starts_with(&lamp_path(2)) || e.path.starts_with(&lamp_path(3))),
+            "{:?}",
+            out.edits
+        );
+        let claims: Vec<_> = out.claims.iter().map(|c| (c.kind, c.index, c.lamp_selection)).collect();
+        assert_eq!(claims, vec![("directLamp", 2, Some(3)), ("directLamp", 3, None)]);
+    }
+
+    #[test]
+    fn removing_an_abs_facility_resets_its_mast_like_the_old_remove_mode() {
+        let mut tree = signal_lcc_tree();
+        set_int(&mut tree, &mast_processing(1), 1);
+        set_int(&mut tree, &mast_lamp(1), 4);
+        let layout = layout(tree, vec![], vec![abs_facility("abs-1", "Main", 1)]);
+
+        let out = compose_removal_from_layout(&layout, &profiles(), "abs-1").unwrap();
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        assert!(out.edits.iter().any(|e| e.path == mast_processing(1)), "{:?}", out.edits);
+        assert!(out.edits.iter().any(|e| e.path == mast_lamp(1)), "{:?}", out.edits);
+        let claims: Vec<_> = out.claims.iter().map(|c| (c.kind, c.index, c.lamp_selection)).collect();
+        assert_eq!(claims, vec![("mast", 1, None)]);
+    }
+
+    #[test]
+    fn removing_an_unknown_facility_is_an_error() {
+        let layout = layout(signal_lcc_tree(), vec![], vec![]);
+        let err = compose_removal_from_layout(&layout, &profiles(), "nope").unwrap_err();
+        assert!(err.contains("nope"), "{err}");
+    }
 
     #[test]
     fn a_direct_lamp_row_held_by_a_panel_is_facility_owned_and_cannot_be_released_by_abs() {
@@ -236,7 +324,6 @@ mod tests {
             &profiles(),
             ComposeBlockSignalsRequest {
                 facility_id: Some("abs-new".into()),
-                remove: false,
                 line: Default::default(),
                 wiring: vec![],
                 release,

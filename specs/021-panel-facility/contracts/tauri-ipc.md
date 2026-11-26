@@ -42,12 +42,12 @@ Request:
 {
   facilityId,
   record: PanelRecord,
-  lamps: [{ entryId, nodeKey, output, currentRow?, name }],   // the editor's wiring
-  release: [{ nodeKey, owner }]                               // S4
+  lamps: [{ entryId, nodeKey, output, name }],   // the editor's wiring; saved rows are read from the layout (S4)
+  release: [{ nodeKey, owner }]                  // S4, optional
 }
 ```
 
-Response: `{ edits: ResolvedEdit[] (same form as compose_block_signals: nodeKey, space, address, path, value), assignments: [{ entryId, nodeKey, row }], issues: [{ code, entryId?, nodeKey?, output?, detail }] }`. Resets of dropped rows join `edits` in S4.
+Response: `{ edits: ResolvedEdit[] (same form as compose_block_signals: nodeKey, space, address, path, value), assignments: [{ entryId, nodeKey, row }], issues: [{ code, entryId?, nodeKey?, output?, detail }] }`. Resets of dropped rows and named releases join `edits` (S4).
 
 Rules:
 
@@ -60,12 +60,14 @@ Rules:
   - `boardUnavailable`
   - `duplicatePin`
   - `noFreeLampRow`
+  - `releaseInvalid` (a named release of a claimed row; S4)
+  - `claimedSlotUnavailable` (a dropped row's board has no facts; S4)
 - Blocking issues mean the caller stages nothing.
 - No writes, no draft mutation, no lasting reservation.
 
-## `compose_panel_removal(facilityId) -> PanelComposition`
+## `compose_facility_removal(facilityId) -> FacilityRemoval` (S4)
 
-Returns resets for every claimed pin and a per-board list for the confirmation dialog. It has the same guarantees as `compose_panel`.
+Kind-agnostic (replaces the planned `compose_panel_removal` and `compose_block_signals { remove: true }`). Response: `{ edits, logicPlacement, issues, claims: [{ nodeKey, kind: mast | logic | trackCircuit | directLamp, index, lampSelection | null }] }`. Resets exactly `facility_claimed_slots`; `claims` drives the confirmation dialog. Same guarantees as `compose_panel`. `panel_wiring_facts` also accepts optional `release` and returns `releaseIssues`.
 
 ## Open result extension
 
@@ -83,8 +85,8 @@ Returns resets for every claimed pin and a per-board list for the confirmation d
   5. add the facility or `setPanelRecord` (plus `renameFacility`);
   6. stage the edits;
   7. roll back steps 4–6 on failure.
-- `removePanelFacility(facilityId)`: call `compose_panel_removal`, stage the resets, delete the facility and its lamp channels.
-- `deleteFacility` sends `panel` facilities here.
+- `previewFacilityRemoval(facilityId)`: sync drafts, call `compose_facility_removal`, stage nothing; returns the claims.
+- `removeFacility({ facilityId, leaveBoard, previewedClaims })`: the only removal router. Compose again, refuse on issues or a changed plan, stage the resets, delete the facility and its lamp channels.
 
 ## Contract tests
 

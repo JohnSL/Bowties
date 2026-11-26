@@ -13,19 +13,20 @@ use bowties_core::{
     layout::{facilities::{ClaimedSlotKind, FacilitiesDocument, PanelRecord}, state::LayoutState},
     node_key::NodeKey,
     node_tree::{ConfigValue, NodeConfigTree},
-    panel::compiler::{
-        compile_panel, PanelBoardFacts, PanelCompilation, PanelCompileInput, PanelIssue, PanelLampRequest,
-        PanelRowAssignment,
-    },
+    panel::{panel_saved_rows, compiler::{
+        compile_panel, PanelBoardFacts, PanelCompilation, PanelCompileInput, PanelIssue, PanelIssueCode,
+        PanelLampRequest, PanelRowAssignment,
+    }},
     profile::StructureProfile,
     signaling::{
+        compiler::{merge_release_edits, release_slots, ReleaseSlot, ReleaseTarget},
         slots::{claimed_slots_from_facilities, node_slot_facts, resolve_edits, LeafPathIndex, ResolvedEdit},
-        SignalHardwareEvidence, SignalHardwareHost, SignalOutput, SignalOutputOwner,
+        ReleaseRequest, SignalHardwareEvidence, SignalHardwareHost, SignalOutput, SignalOutputOwner,
     },
 };
 use serde::{Deserialize, Serialize};
 
-use crate::signaling::{occupancy_events, proposal_facts_from_layout};
+use crate::signaling::{index_effective_trees, occupancy_events, proposal_facts_from_layout};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -34,6 +35,9 @@ pub struct PanelWiringFactsRequest {
     /// Restrict to these boards; every board with Direct Lamp Control when absent.
     #[serde(default)]
     pub node_keys: Option<Vec<String>>,
+    /// Outside owners the caller proposes to release; they read as free in the facts.
+    #[serde(default)]
+    pub release: Vec<ReleaseRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -77,6 +81,8 @@ pub struct WiringIssue {
 pub struct PanelWiringFactsResponse {
     pub boards: Vec<BoardWiring>,
     pub issues: Vec<WiringIssue>,
+    /// Named releases that cannot be honoured (the owner is claimed or absent).
+    pub release_issues: Vec<WiringIssue>,
 }
 
 pub async fn wiring_facts(
@@ -96,7 +102,7 @@ fn wiring_facts_from_layout(
     profiles: &HashMap<String, Option<StructureProfile>>,
     request: &PanelWiringFactsRequest,
 ) -> Result<PanelWiringFactsResponse, String> {
-    let facts = proposal_facts_from_layout(layout, profiles, &[]);
+    let facts = proposal_facts_from_layout(layout, profiles, &request.release);
     let wanted: Option<Vec<NodeKey>> = request
         .node_keys
         .as_ref()
@@ -106,7 +112,14 @@ fn wiring_facts_from_layout(
                 .collect::<Result<_, _>>()
         })
         .transpose()?;
-    let mut response = PanelWiringFactsResponse::default();
+    let mut response = PanelWiringFactsResponse {
+        release_issues: facts
+            .release_issues
+            .iter()
+            .map(|i| WiringIssue { node_key: i.node_key.clone().unwrap_or_default(), detail: i.detail.clone() })
+            .collect(),
+        ..Default::default()
+    };
     let mut hosts: Vec<&SignalHardwareHost> = facts
         .hardware
         .hosts
@@ -193,6 +206,9 @@ pub struct ComposePanelRequest {
     pub facility_id: String,
     pub record: PanelRecord,
     pub lamps: Vec<PanelLampRequest>,
+    /// Outside owners the caller proposes to release so their pins can be chosen.
+    #[serde(default)]
+    pub release: Vec<ReleaseRequest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,12 +233,36 @@ fn compose_from_layout(
     profiles: &HashMap<String, Option<StructureProfile>>,
     request: ComposePanelRequest,
 ) -> Result<ComposePanelResponse, String> {
-    let facts = proposal_facts_from_layout(layout, profiles, &[]);
+    let facts = proposal_facts_from_layout(layout, profiles, &request.release);
+    if !facts.release_issues.is_empty() {
+        return Ok(ComposePanelResponse {
+            edits: Vec::new(),
+            assignments: Vec::new(),
+            issues: facts
+                .release_issues
+                .iter()
+                .map(|issue| PanelIssue {
+                    code: PanelIssueCode::ReleaseInvalid,
+                    entry_id: None,
+                    node_key: issue.node_key.clone(),
+                    output: None,
+                    detail: issue.detail.clone(),
+                })
+                .collect(),
+        });
+    }
     let claimed = claimed_slots_from_facilities(
         layout.effective_facilities(),
         layout.effective_channels(),
         Some(&request.facility_id),
     );
+    let saved_rows = layout
+        .effective_facilities()
+        .facilities
+        .iter()
+        .find(|f| f.facility_id == request.facility_id)
+        .map(|f| panel_saved_rows(f, layout.effective_channels()))
+        .unwrap_or_default();
     let occupancy = request.record.entries.iter().map(|e| occupancy_events(&facts, &e.block_id)).collect();
 
     let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
@@ -253,16 +293,60 @@ fn compose_from_layout(
                 .collect(),
         });
     }
-    let indexes: HashMap<String, LeafPathIndex<'_>> =
-        trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
 
-    let PanelCompilation { edits, assignments, issues } = compile_panel(&PanelCompileInput {
+    let PanelCompilation { edits, assignments, issues, released } = compile_panel(&PanelCompileInput {
         facility_id: request.facility_id,
         record: request.record,
         lamps: request.lamps,
+        saved_rows,
         occupancy,
         boards,
     });
+    let mut edits = edits;
+    if !released.is_empty() {
+        // An edit releases the rows it drops (ADR-0020): reset them through the
+        // shared `release_slots`, on boards that may hold no lamp of the new record.
+        trees.extend(index_effective_trees(&facts, released.iter().map(|r| &r.node_key))?);
+        let mut released_boards: Vec<&str> = released.iter().map(|r| r.node_key.as_str()).collect();
+        released_boards.sort_unstable();
+        released_boards.dedup();
+        let nodes: Vec<_> = released_boards
+            .into_iter()
+            .filter_map(|board| trees.get(board).map(|tree| node_slot_facts(board, tree, &[])))
+            .collect();
+        let targets: Vec<ReleaseTarget> = released
+            .iter()
+            .map(|row| ReleaseTarget { node_key: row.node_key.clone(), slot: ReleaseSlot::DirectLamp(row.row) })
+            .collect();
+        let reset = release_slots(&targets, &nodes);
+        if let Some(issue) = reset.issues.first() {
+            return Ok(ComposePanelResponse {
+                edits: Vec::new(),
+                assignments: Vec::new(),
+                issues: vec![PanelIssue {
+                    code: PanelIssueCode::ClaimedSlotUnavailable,
+                    entry_id: None,
+                    node_key: issue.node_key.clone(),
+                    output: None,
+                    detail: issue.detail.clone(),
+                }],
+            });
+        }
+        edits.extend(reset.edits);
+    }
+    // The request's named releases ride along; the recipe wins on a shared leaf.
+    let edits = merge_release_edits(facts.release_edits.clone(), edits);
+    for edit in &edits {
+        if trees.contains_key(&edit.node_key) {
+            continue;
+        }
+        let key = NodeKey::parse(&edit.node_key).map_err(|e| format!("Invalid node key '{}': {e}", edit.node_key))?;
+        if let Some(tree) = facts.trees.get(&key) {
+            trees.insert(edit.node_key.clone(), tree);
+        }
+    }
+    let indexes: HashMap<String, LeafPathIndex<'_>> =
+        trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
     let edits = resolve_edits(&indexes, &edits).map_err(|e| e.to_string())?;
     Ok(ComposePanelResponse { edits, assignments, issues })
 }
@@ -271,7 +355,7 @@ fn compose_from_layout(
 mod tests {
     use super::fixtures::*;
     use super::*;
-    use bowties_core::panel::compiler::PanelIssueCode;
+    use bowties_core::signaling::slots::ResolvedValue;
 
     fn board_tree() -> bowties_core::node_tree::NodeConfigTree {
         let mut tree = signal_lcc_tree();
@@ -318,6 +402,33 @@ mod tests {
         assert_eq!(json["boards"][0]["pins"][2]["owner"]["facilityId"], "pnl-1");
     }
 
+    #[test]
+    fn wiring_facts_read_a_released_outside_pin_as_free_and_report_a_claimed_owner_release() {
+        let layout = layout(
+            board_tree(),
+            vec![lamp_channel("lamp-2", 2)],
+            vec![panel_facility("pnl-1", "Yard Panel", &["lamp-2"])],
+        );
+        let release = |row: u32| ReleaseRequest { node_key: BOARD.into(), owner: SignalOutputOwner::DirectLamp(row) };
+
+        let request = PanelWiringFactsRequest { release: vec![release(4)], ..Default::default() };
+        let out = wiring_facts_from_layout(&layout, &profiles(), &request).unwrap();
+        assert!(out.release_issues.is_empty(), "{:?}", out.release_issues);
+        assert_eq!(out.boards[0].pins[6].owner, PinOwner::Free, "pin 7's outside row 4 is released");
+
+        let request = PanelWiringFactsRequest { release: vec![release(2)], ..Default::default() };
+        let out = wiring_facts_from_layout(&layout, &profiles(), &request).unwrap();
+        assert_eq!(out.release_issues.len(), 1);
+        assert_eq!(out.release_issues[0].node_key, BOARD);
+        assert_eq!(
+            out.boards[0].pins[2].owner,
+            PinOwner::Panel { facility_id: "pnl-1".into(), name: "Yard Panel".into(), row: 2 },
+            "a claimed owner is not freed"
+        );
+        let json = serde_json::to_value(&out).unwrap();
+        assert_eq!(json["releaseIssues"][0]["nodeKey"], BOARD);
+    }
+
     fn compose_request(pins: [u32; 3]) -> ComposePanelRequest {
         use bowties_core::layout::facilities::{LitWhen, PanelEntry};
         let entry = |id: &str, block: &str| PanelEntry {
@@ -330,7 +441,6 @@ mod tests {
             entry_id: id.into(),
             node_key: BOARD.into(),
             output: pin,
-            current_row: None,
             name: format!("Lamp {id}"),
         };
         ComposePanelRequest {
@@ -340,6 +450,7 @@ mod tests {
                 entries: vec![entry("e1", "b1"), entry("e2", "b2"), entry("e3", "b3")],
             },
             lamps: vec![lamp("e1", pins[0]), lamp("e2", pins[1]), lamp("e3", pins[2])],
+            release: Vec::new(),
         }
     }
 
@@ -379,5 +490,171 @@ mod tests {
         assert_eq!(out.issues.len(), 1);
         assert_eq!(out.issues[0].code, PanelIssueCode::PinOwnedElsewhere);
         assert_eq!(out.issues[0].output, Some(9));
+    }
+
+    fn release_direct_lamp(row: u32) -> ReleaseRequest {
+        ReleaseRequest { node_key: BOARD.into(), owner: SignalOutputOwner::DirectLamp(row) }
+    }
+
+    #[test]
+    fn compose_seats_a_lamp_on_an_outside_pin_only_when_that_owner_is_released() {
+        let layout = layout(board_tree(), vec![], vec![]);
+        // Pin 7 is driven by outside Direct Lamp row 4 ("Depot lamp").
+        let blocked = compose_from_layout(&layout, &profiles(), compose_request([7, 9, 14])).unwrap();
+        assert!(blocked.edits.is_empty());
+        assert_eq!(blocked.issues.len(), 1);
+        assert_eq!(blocked.issues[0].code, PanelIssueCode::PinOutsideNotReleased);
+        assert_eq!(blocked.issues[0].output, Some(7));
+
+        let mut request = compose_request([7, 9, 14]);
+        request.release = vec![release_direct_lamp(4)];
+        let out = compose_from_layout(&layout, &profiles(), request).unwrap();
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        let row = out.assignments[0].row;
+        let on = |r: u32| edit_for(&out, BOARD, &format!("Direct Lamp Control/Lamp[{r}]/Lamp On")).is_some();
+        assert!(on(row), "the recipe seats the lamp");
+        if row != 4 {
+            let sel = edit_for(&out, BOARD, "Direct Lamp Control/Lamp[4]/Lamp Selection").expect("row 4 reset");
+            assert_eq!(sel.value, ResolvedValue::Config(ConfigValue::Int { value: 0 }));
+        }
+        let desc = edit_for(&out, BOARD, &format!("Direct Lamp Control/Lamp[{row}]/Lamp Description")).unwrap();
+        assert_eq!(desc.value, ResolvedValue::Config(ConfigValue::String { value: "Lamp e1".into() }));
+        let mut leaves: Vec<_> = out.edits.iter().map(|e| (e.node_key.clone(), e.path.clone())).collect();
+        let total = leaves.len();
+        leaves.sort();
+        leaves.dedup();
+        assert_eq!(leaves.len(), total, "no leaf is edited twice");
+    }
+
+    #[test]
+    fn compose_refuses_a_release_of_a_row_another_panel_claims() {
+        let layout = layout(
+            board_tree(),
+            vec![lamp_channel("lamp-2", 2)],
+            vec![panel_facility("pnl-1", "Yard Panel", &["lamp-2"])],
+        );
+        let mut request = compose_request([3, 9, 14]);
+        request.release = vec![release_direct_lamp(2)];
+        let out = compose_from_layout(&layout, &profiles(), request).unwrap();
+        assert!(out.edits.is_empty() && out.assignments.is_empty());
+        assert_eq!(out.issues.len(), 1);
+        assert_eq!(out.issues[0].code, PanelIssueCode::ReleaseInvalid);
+        assert_eq!(out.issues[0].node_key.as_deref(), Some(BOARD));
+    }
+
+    const OTHER_BOARD: &str = "05010101FF03";
+
+    /// A saved panel `pnl-1` whose entries e1..eN sit on `(board, row)` lamp channels.
+    fn saved_panel_layout(lamps: &[(&str, u32)], with_other_board: bool) -> LayoutState {
+        use bowties_core::layout::channels::ChannelBinding;
+        use bowties_core::layout::facilities::{LitWhen, PanelEntry};
+        let mut channels = Vec::new();
+        let mut entries = Vec::new();
+        for (i, (board, row)) in lamps.iter().enumerate() {
+            let mut ch = lamp_channel(&format!("lamp-{i}"), *row);
+            ch.binding = ChannelBinding::LampRow { node_key: (*board).into(), row_ordinal: *row };
+            channels.push(ch);
+            entries.push(PanelEntry {
+                entry_id: format!("e{}", i + 1),
+                block_id: format!("b{}", i + 1),
+                lamp_channel_id: Some(format!("lamp-{i}")),
+                lit_when: None,
+            });
+        }
+        let mut facility = panel_facility("pnl-1", "Yard Panel", &[]);
+        facility.panel = Some(PanelRecord { lit_when: LitWhen::Occupied, entries });
+        let mut layout = layout(signal_lcc_tree(), channels, vec![facility]);
+        if with_other_board {
+            layout.record_captured(
+                NodeKey::parse(OTHER_BOARD).unwrap(),
+                bowties_core::layout::state::CapturedNode { tree: Some(signal_lcc_tree()), ..Default::default() },
+            );
+        }
+        layout
+    }
+
+    fn recompose(
+        layout: &LayoutState,
+        lamps: &[(&str, &str, u32)], // (entry id, board, pin)
+    ) -> ComposePanelResponse {
+        use bowties_core::layout::facilities::{LitWhen, PanelEntry};
+        let request = ComposePanelRequest {
+            facility_id: "pnl-1".into(),
+            record: PanelRecord {
+                lit_when: LitWhen::Occupied,
+                entries: lamps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (id, _, _))| PanelEntry {
+                        entry_id: (*id).into(),
+                        block_id: format!("b{}", i + 1),
+                        lamp_channel_id: None,
+                        lit_when: None,
+                    })
+                    .collect(),
+            },
+            lamps: lamps
+                .iter()
+                .map(|(id, board, pin)| PanelLampRequest {
+                    entry_id: (*id).into(),
+                    node_key: (*board).into(),
+                    output: *pin,
+                    name: format!("Lamp {id}"),
+                })
+                .collect(),
+            release: Vec::new(),
+        };
+        compose_from_layout(layout, &profiles(), request).unwrap()
+    }
+
+    fn edit_for<'a>(out: &'a ComposePanelResponse, board: &str, path: &str) -> Option<&'a ResolvedEdit> {
+        out.edits.iter().find(|e| e.node_key == board && e.path == path)
+    }
+
+    #[test]
+    fn recompose_with_an_entry_removed_resets_its_row_and_recipes_only_the_kept_row() {
+        let layout = saved_panel_layout(&[(BOARD, 2), (BOARD, 6)], false);
+        let out = recompose(&layout, &[("e1", BOARD, 2)]);
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        assert_eq!(out.assignments.len(), 1);
+        assert_eq!(out.assignments[0].row, 2);
+        let sel = edit_for(&out, BOARD, "Direct Lamp Control/Lamp[6]/Lamp Selection").expect("row 6 reset");
+        assert_eq!(sel.value, ResolvedValue::Config(ConfigValue::Int { value: 0 }));
+        assert!(edit_for(&out, BOARD, "Direct Lamp Control/Lamp[6]/Lamp On").is_some());
+        assert!(edit_for(&out, BOARD, "Direct Lamp Control/Lamp[2]/Lamp On").is_some());
+        assert_eq!(out.edits.len(), 8, "4 recipe edits on row 2 + 4 reset edits on row 6");
+    }
+
+    #[test]
+    fn recompose_with_a_lamp_moved_to_another_board_resets_the_old_row_and_allocates_on_the_new_board() {
+        let layout = saved_panel_layout(&[(BOARD, 2)], true);
+        let out = recompose(&layout, &[("e1", OTHER_BOARD, 5)]);
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        assert_eq!(out.assignments[0].node_key, OTHER_BOARD);
+        assert!(edit_for(&out, BOARD, "Direct Lamp Control/Lamp[2]/Lamp Description").is_some());
+        let row = out.assignments[0].row;
+        assert!(edit_for(&out, OTHER_BOARD, &format!("Direct Lamp Control/Lamp[{row}]/Lamp On")).is_some());
+        assert_eq!(out.edits.len(), 8);
+    }
+
+    #[test]
+    fn recompose_with_a_same_board_pin_change_resets_nothing() {
+        let layout = saved_panel_layout(&[(BOARD, 2)], false);
+        let out = recompose(&layout, &[("e1", BOARD, 9)]);
+        assert!(out.issues.is_empty(), "{:?}", out.issues);
+        assert_eq!(out.assignments[0].row, 2);
+        let sel = edit_for(&out, BOARD, "Direct Lamp Control/Lamp[2]/Lamp Selection").unwrap();
+        assert_eq!(sel.value, ResolvedValue::Config(ConfigValue::Int { value: 9 }));
+        assert_eq!(out.edits.len(), 4, "only the kept row's recipe");
+    }
+
+    #[test]
+    fn recompose_blocks_when_a_dropped_rows_board_is_not_loaded() {
+        let layout = saved_panel_layout(&[(BOARD, 2), (OTHER_BOARD, 3)], false);
+        let out = recompose(&layout, &[("e1", BOARD, 2)]);
+        assert!(out.edits.is_empty() && out.assignments.is_empty());
+        assert_eq!(out.issues.len(), 1);
+        assert_eq!(out.issues[0].code, PanelIssueCode::ClaimedSlotUnavailable);
+        assert_eq!(out.issues[0].node_key.as_deref(), Some(OTHER_BOARD));
     }
 }

@@ -6,23 +6,12 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }));
 
-const { composeBlockSignals, composeBlockSignalsRemoval, previewBlockSignals } = await import('$lib/api/signaling');
+const { composeBlockSignals, previewBlockSignals } = await import('$lib/api/signaling');
 import type {
   BlockSignalsPreview,
   BlockSignalsPreviewRequest,
   ComposeBlockSignalsRequest,
 } from '$lib/api/signaling';
-
-describe('composeBlockSignalsRemoval', () => {
-  it('asks the compose command to release the facility mast and Logic', async () => {
-    invokeMock.mockReset();
-    invokeMock.mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
-    await composeBlockSignalsRemoval('abs:main');
-    expect(invokeMock).toHaveBeenCalledWith('compose_block_signals', {
-      request: { facilityId: 'abs:main', remove: true },
-    });
-  });
-});
 
 describe('released owners', () => {
   const line: BlockSignalsPreviewRequest = {

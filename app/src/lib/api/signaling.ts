@@ -241,18 +241,6 @@ export interface RemovalEdit extends Omit<ComposedEdit, 'value'> {
   value: TreeConfigValue | FreshEventIdValue;
 }
 
-/**
- * With any issue, `edits` and `logicPlacement` are empty. `signalResources` is
- * always empty. `logicPlacement` has one entry per board that held this
- * facility's Logic: the groups that remain there (empty when none do).
- */
-export interface RemovalResponse {
-  edits: RemovalEdit[];
-  signalResources: SignalResourcesEntry[];
-  logicPlacement: NodeLogicPlacement[];
-  issues: ComposeIssue[];
-}
-
 /** One signal's board resources as the compiler chose them. */
 export interface SignalResourcesEntry {
   signalId: string;
@@ -310,21 +298,4 @@ export async function composeBlockSignals(
   request: ComposeBlockSignalsRequest,
 ): Promise<ComposeBlockSignalsResponse> {
   return invoke<ComposeBlockSignalsResponse>('compose_block_signals', { request });
-}
-
-/**
- * Read-only: the edits that return the facility's claimed masts (lamps
- * cleared) and Logic to their unused state, for the caller to stage when
- * removing the facility. The Logic's recipe events come back as
- * `freshEventId` for the caller to replace with generated event IDs.
- * `logicPlacement` names each board's remaining groups. A node whose configuration is not loaded, or a
- * claimed slot that is missing, comes back as a `claimedSlotUnavailable` issue
- * with no edits.
- */
-export async function composeBlockSignalsRemoval(
-  facilityId: string,
-): Promise<RemovalResponse> {
-  return invoke<RemovalResponse>('compose_block_signals', {
-    request: { facilityId, remove: true },
-  });
 }

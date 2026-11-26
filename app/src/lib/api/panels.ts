@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { PanelRecord } from '$lib/api/facilities';
-import type { RemovalEdit } from '$lib/api/signaling';
+import type { ReleasedOwner, RemovalEdit } from '$lib/api/signaling';
 
 /** Who holds a board pin, tagged by `kind`. */
 export type PinOwner =
@@ -28,6 +28,8 @@ export interface PanelWiringFacts {
   boards: PanelWiringBoard[];
   /** Boards whose pins could not be read. */
   issues: { nodeKey: string; detail: string }[];
+  /** Named releases that cannot be honoured (the owner is claimed or absent); they free nothing. */
+  releaseIssues: { nodeKey: string; detail: string }[];
 }
 
 /** One lamp to wire: the entry it lights for and the pin it sits on. */
@@ -35,8 +37,6 @@ export interface PanelLampRequest {
   entryId: string;
   nodeKey: string;
   output: number;
-  /** The Direct Lamp row the lamp already uses, when re-composing a saved panel. */
-  currentRow?: number;
   name: string;
 }
 
@@ -44,6 +44,8 @@ export interface ComposePanelRequest {
   facilityId: string;
   record: PanelRecord;
   lamps: PanelLampRequest[];
+  /** Outside owners released so their pins can be chosen. Optional; empty when omitted. */
+  release?: ReleasedOwner[];
 }
 
 export interface PanelRowAssignment {
@@ -58,7 +60,9 @@ export type ComposePanelIssueCode =
   | 'duplicatePin'
   | 'blockEventsUnresolved'
   | 'boardUnavailable'
-  | 'noFreeLampRow';
+  | 'noFreeLampRow'
+  | 'claimedSlotUnavailable'
+  | 'releaseInvalid';
 
 export interface ComposePanelIssue {
   code: ComposePanelIssueCode;
@@ -75,9 +79,12 @@ export interface ComposePanelResponse {
   issues: ComposePanelIssue[];
 }
 
-/** Read-only: every pin on the named boards (all boards when omitted) with its owner. */
-export async function panelWiringFacts(nodeKeys?: string[]): Promise<PanelWiringFacts> {
-  const request = nodeKeys ? { nodeKeys } : {};
+/**
+ * Read-only: every pin on the named boards (all boards when omitted) with its owner.
+ * Owners named in `release` read as free (what the pins would be once released).
+ */
+export async function panelWiringFacts(nodeKeys?: string[], release?: ReleasedOwner[]): Promise<PanelWiringFacts> {
+  const request = { ...(nodeKeys ? { nodeKeys } : {}), ...(release?.length ? { release } : {}) };
   return invoke<PanelWiringFacts>('panel_wiring_facts', { request });
 }
 

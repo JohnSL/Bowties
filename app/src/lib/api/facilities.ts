@@ -1,10 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ComposeIssue,
   EntranceEnd,
   ExitEnd,
   FacilitySignalSettings,
   ListedBlock,
   Movements,
+  RemovalEdit,
   TravelDirection,
 } from '$lib/api/signaling';
 
@@ -96,4 +98,37 @@ export type FacilityStatus = 'Incomplete' | 'Wired';
 /// Fetch the facility inventory for the active layout.
 export async function listFacilities(): Promise<FacilitiesListing> {
   return invoke<FacilitiesListing>('list_facilities');
+}
+
+/** One slot a facility claims, as the removal confirmation lists it. */
+export interface FacilityRemovalClaim {
+  nodeKey: string;
+  kind: 'mast' | 'logic' | 'trackCircuit' | 'directLamp';
+  index: number;
+  /** A Direct Lamp row's effective Lamp Selection; null when 0 or unset. */
+  lampSelection: number | null;
+}
+
+/**
+ * With any issue, `edits` and `logicPlacement` are empty (`claims` still lists
+ * what was claimed). `logicPlacement` has one entry per board that held this
+ * facility's Logic: the groups that remain there (empty when none do).
+ */
+export interface FacilityRemovalResponse {
+  edits: RemovalEdit[];
+  logicPlacement: NodeLogicPlacement[];
+  issues: ComposeIssue[];
+  claims: FacilityRemovalClaim[];
+}
+
+/**
+ * Read-only, kind-agnostic: the edits that return every slot the facility
+ * claims (masts, Logic, Track Circuits, panel lamp rows) to its unused state,
+ * for the caller to stage when removing it. The Logic's recipe events come back
+ * as `freshEventId` for the caller to replace with generated event IDs. A node
+ * whose configuration is not loaded, or a claimed slot that is missing, comes
+ * back as a `claimedSlotUnavailable` issue with no edits.
+ */
+export async function composeFacilityRemoval(facilityId: string): Promise<FacilityRemovalResponse> {
+  return invoke<FacilityRemovalResponse>('compose_facility_removal', { facilityId });
 }

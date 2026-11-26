@@ -412,6 +412,17 @@ class EffectiveLayoutStore {
     });
   }
 
+  /** The board name as the Panel card and Channels panel show it. */
+  boardName(nodeKey: string): string {
+    return resolveNodeNameForKey(nodeKey);
+  }
+
+  /** The pin label of a board's Lamp Selection as the panel card shows it; the selection itself when the board is not loaded. */
+  signalPinLabel(nodeKey: string, lampSelection: number): string {
+    const tree = nodeRoster.allEntries.find((e) => e.nodeKey === nodeKey)?.tree;
+    return tree ? signalOutputLabel(tree, lampSelection) : `#${lampSelection}`;
+  }
+
   /** Effective Lamp Selection of a Direct Lamp Control row; `null` when unset (0) or absent. */
   private _lampSelection(tree: NodeConfigTree, rowOrdinal: number): number | null {
     const segment = tree.segments.find((s) => s.name === 'Direct Lamp Control');

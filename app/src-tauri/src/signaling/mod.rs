@@ -35,8 +35,8 @@ pub struct ProposalFacts {
     pub(crate) hardware: SignalHardwareFacts,
     /// Edits that release the request's named untracked owners; their effect
     /// is already applied to `trees` and `hardware`.
-    release_edits: Vec<NodeConfigEdit>,
-    release_issues: Vec<CompileIssue>,
+    pub(crate) release_edits: Vec<NodeConfigEdit>,
+    pub(crate) release_issues: Vec<CompileIssue>,
     outside_owners: Vec<UntrackedOwnerRelease>,
 }
 
@@ -178,6 +178,23 @@ fn detection_event_mapping(style: &str) -> Option<HashMap<String, u32>> {
         ])),
         _ => None,
     }
+}
+
+/// Index the effective trees of the named nodes by the caller's node-key string,
+/// skipping nodes whose configuration is not loaded. Shared by every compose
+/// path that resolves edits against several boards.
+pub(crate) fn index_effective_trees<'a, 'k>(
+    facts: &'a ProposalFacts,
+    node_keys: impl IntoIterator<Item = &'k String>,
+) -> Result<HashMap<String, &'a NodeConfigTree>, String> {
+    let mut trees = HashMap::new();
+    for node_key in node_keys {
+        let key = NodeKey::parse(node_key).map_err(|e| format!("Invalid node key '{node_key}': {e}"))?;
+        if let Some(tree) = facts.trees.get(&key) {
+            trees.insert(node_key.clone(), tree);
+        }
+    }
+    Ok(trees)
 }
 
 /// Assemble proposal facts from the effective LayoutState. Signal hosts come

@@ -154,3 +154,23 @@ free pin, and Block Indicator lamps whose hand-set Lamp Selection differs
 from their row could not migrate without board writes); persisting the pin
 in the binding (a second source of truth beside Lamp Selection, and
 migration would need an unknown-pin state or a configuration read at load).
+
+## 2026-11-26 extension: the panel's saved rows come from the layout, and dropped rows are released
+
+From Spec 021 S4, the panel compiler no longer accepts a lamp's current row
+from the request. The backend reads the panel's saved rows from the
+effective layout (entry → lamp channel → `lampRow` binding, through
+`bowties-core` `panel::panel_saved_rows`) and passes them in
+`PanelCompileInput.saved_rows`. A lamp keeps its entry's saved row only when
+it stays on the same board (canonical node key). The compiler returns the
+saved rows no lamp keeps in `PanelCompilation.released`, empty when any
+issue blocks the compile. The caller resets those rows through
+`release_slots` (ADR-0012), so a block removed, a lamp cleared, or a lamp
+moved to another board resets its old row, and a same-board pin move still
+changes only Lamp Selection.
+
+Rejected: a request-supplied current row (the frontend could keep or reserve
+a row the layout does not hold, including the old board's row number after
+a cross-board move); diffing saved and requested rows in the backend command
+or the orchestrator (a second copy of the keep rule beside the compiler that
+applies it).

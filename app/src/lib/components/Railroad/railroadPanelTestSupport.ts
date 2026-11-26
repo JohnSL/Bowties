@@ -260,11 +260,15 @@ export function seedSignalNodeTree() {
  * fresh event IDs), or `issues`. Call `seedSignalNodeTree()` first.
  */
 export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
+  const claims = [
+    { nodeKey: SIGNAL_NODE, kind: 'mast', index: 1, lampSelection: null },
+    { nodeKey: SIGNAL_NODE, kind: 'logic', index: 1, lampSelection: null },
+  ];
   const release = (address: number, path: string, value: unknown) => ({ nodeKey: SIGNAL_NODE, space: 253, address, path, value });
   return {
     ...signalIpc(),
-    compose_block_signals: () => issues().length > 0
-      ? { edits: [], signalResources: [], logicPlacement: [], issues: issues() }
+    compose_facility_removal: () => issues().length > 0
+      ? { edits: [], logicPlacement: [], issues: issues(), claims }
       : {
         edits: [
           release(100, 'mast#1/function', { type: 'int', value: 0 }),
@@ -274,9 +278,9 @@ export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
           release(201, 'logic#1/description', { type: 'string', value: '' }),
           ...REMOVAL_EVENT_ADDRESSES.map((address) => release(address, `logic#1/event@${address}`, { type: 'freshEventId' })),
         ],
-        signalResources: [],
         logicPlacement: [{ nodeKey: SIGNAL_NODE, groups: [] }],
         issues: [],
+        claims,
       },
   };
 }

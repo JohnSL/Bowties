@@ -373,7 +373,8 @@ Spec 020 E2b removes a saved Automatic Block Signals facility.
   issue, then stages the release edits and deletes the facility and its signal
   channels. The edits are staged before the deletes, the only step that can
   fail, so a failure restores prior drafts and leaves the facility untouched.
-  The generic `deleteFacility` routes ABS facilities here.
+  The generic `deleteFacility` routes ABS facilities here. *(Superseded
+  2026-11-26: see the facility-level removal extension below.)*
 - **Refuse by default, leave the board on request.** When the release cannot
   be worked out (the board's configuration is not loaded, or a claimed slot is
   missing), removal is refused with the reason. An explicit `leaveBoard`
@@ -471,3 +472,46 @@ Spec 021 S1 adds the **Panel** facility, a second compiled-intent kind.
   the hand-written ABS rollback: an update that added a signal removed the
   new channel on failure but left it attached. Rejected: a parallel
   `stagePanelFacility` with its own rollback list.
+
+## 2026-11-26 extension: one facility-level removal; panel edits release the rows they drop; panel requests carry releases
+
+Spec 021 S4 adds Edit and Remove for panels.
+
+- **One removal command for every compiled facility.** `compose_facility_removal
+  { facilityId }` (app `commands/facilities.rs` → `signaling/compose.rs`
+  `compose_removal_from_layout`) replaces `compose_block_signals { remove: true }`.
+  Its only guard is that the facility exists. Its targets are
+  `facility_claimed_slots` applied through `release_slots`, so a panel's Direct
+  Lamp rows and an ABS facility's masts, Logic and Track Circuits are reset by
+  the same code, and a missing board's facts block with `ClaimedSlotUnavailable`.
+  The response returns `{ edits, logicPlacement, issues, claims }`; `claims`
+  lists each claimed slot (`nodeKey`, `kind`, `index`, and the effective Lamp
+  Selection of a Direct Lamp row).
+- **Preview, then stage the plan the user confirmed.**
+  `facilityOrchestrator.previewFacilityRemoval` syncs drafts and composes, staging
+  nothing; the Remove dialog (`Facilities/FacilityRemoveDialog`) lists exactly
+  those claims, formatted by `utils/facilityRemovalText.ts`. On confirm,
+  `removeFacility({ facilityId, leaveBoard, previewedClaims })` composes again and
+  refuses with `planChanged` if the claims differ. `removeFacility` is the only
+  removal router: facilities with a `panel` or `blockSignals` record go through
+  the staging transaction; others keep generic teardown. This supersedes
+  "the generic `deleteFacility` routes ABS facilities here" (2026-11-23).
+- **A panel edit releases the rows it drops.** `compile_panel` returns the saved
+  rows no lamp keeps (ADR-0013 2026-11-26); app `panel::compose_from_layout`
+  indexes their boards and applies `release_slots` to them, so removing a block,
+  clearing a lamp or moving it to another board resets its old row, and nothing
+  else. Dropped lamp channels are detached and removed in the transaction's
+  commit (`updatePanelFacility`), as ABS does for dropped signals (ADR-0020).
+- **Panel requests carry named releases.** `panel_wiring_facts` and `compose_panel`
+  accept `release` and read facts through the same `overlay_releases` overlay as
+  ABS (`proposal_facts_from_layout`; `ProposalFacts.release_edits` /
+  `release_issues` are crate-visible). A released pin reads as free; a release of
+  a claimed row is `releaseInvalid`; release edits merge with the recipe through
+  `merge_release_edits`. Both Wiring steps use one presentational release card
+  and one released-owners dedupe helper (`utils/releasedOwners.ts`).
+
+Rejected: per-kind removal commands (a kind nobody routes falls through to
+generic teardown and leaves board rows configured); a dialog text derived on the
+frontend beside the backend reset set (the two can name different rows, e.g. a
+claimed row with Lamp Selection 0); running `overlay_releases` a second time in
+the panel module (a second definition of "free").

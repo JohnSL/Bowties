@@ -17,6 +17,7 @@ import type {
 import type { BlockSignalsRecord } from '$lib/api/facilities';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
+import { withReleasedOwner } from '$lib/utils/releasedOwners';
 import { generateUuidV4 } from '$lib/utils/uuid';
 import { seatPin } from '$lib/utils/pinSeat';
 import { previewRequestFromRecord } from '$lib/utils/blockSignalsPreviewRequest';
@@ -347,9 +348,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
 
   /** Release an untracked owner; the same owner is held once. */
   releaseOwner(owner: ReleasedOwner): void {
-    const key = canonicalizeNodeId(owner.nodeKey);
-    if (this._released.some((r) => canonicalizeNodeId(r.nodeKey) === key && r.owner === owner.owner)) return;
-    this._released = [...this._released, { ...owner }];
+    this._released = withReleasedOwner(this._released, owner);
   }
 
   /** Release an owner and place the lamp on its (now free) pin in one step. */

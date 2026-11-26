@@ -441,6 +441,7 @@ pub fn run() {
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
             preview_block_signals,
             compose_block_signals,
+            commands::compose_facility_removal,
             panel_wiring_facts,
             compose_panel,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)

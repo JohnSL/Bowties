@@ -159,6 +159,7 @@
   .panel-editor :global(.note) { padding: 8px 10px; border-left: 3px solid var(--pe-border-strong); border-radius: 3px; background: var(--pe-subtle); font-size: 12px; }
   .panel-editor :global(.note.warn) { border-left-color: #d17b0f; background: #fff7e6; }
   .panel-editor :global(.note.ok) { border-left-color: #17a65b; background: #eefaf4; }
+  .panel-editor :global(.note.error) { border-left-color: var(--fluent-dangerBackground, #c42b1c); background: #fdf3f2; }
   @media (max-width: 760px), (max-height: 640px) {
     .workspace { overflow-y: auto; }
     .panel-editor :global(.panes) { grid-template-columns: 1fr; flex: none; }

@@ -9,8 +9,7 @@ use crate::layout::facilities::{canonical_node_key, LitWhen, PanelRecord};
 use crate::signaling::compiler::{direct_lamp_path, BlockOccupancyEvents, EditValue, NodeConfigEdit};
 use crate::signaling::{SignalOutput, SignalOutputOwner};
 
-/// A lamp the panel wants lit for one entry: the board pin it drives and the
-/// Direct Lamp row it already holds, if any.
+/// A lamp the panel wants lit for one entry: the board pin it drives.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelLampRequest {
@@ -18,8 +17,6 @@ pub struct PanelLampRequest {
     pub node_key: String,
     /// 1-based physical output pin.
     pub output: u32,
-    /// The row the lamp channel is bound to; kept when present.
-    pub current_row: Option<u32>,
     pub name: String,
 }
 
@@ -43,6 +40,9 @@ pub struct PanelCompileInput {
     pub facility_id: String,
     pub record: PanelRecord,
     pub lamps: Vec<PanelLampRequest>,
+    /// Rows the panel holds in the saved layout, one per entry with a lamp.
+    #[serde(default)]
+    pub saved_rows: Vec<PanelRowAssignment>,
     pub occupancy: Vec<BlockOccupancyEvents>,
     pub boards: Vec<PanelBoardFacts>,
 }
@@ -64,6 +64,10 @@ pub enum PanelIssueCode {
     BlockEventsUnresolved,
     BoardUnavailable,
     NoFreeLampRow,
+    /// A row the edit drops cannot be reset: its board's configuration is not loaded.
+    ClaimedSlotUnavailable,
+    /// A release the request names cannot be honoured (the owner is claimed or absent).
+    ReleaseInvalid,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -82,6 +86,9 @@ pub struct PanelCompilation {
     pub edits: Vec<NodeConfigEdit>,
     pub assignments: Vec<PanelRowAssignment>,
     pub issues: Vec<PanelIssue>,
+    /// Saved rows no lamp keeps; the caller releases them. Empty with any issue.
+    #[serde(default)]
+    pub released: Vec<PanelRowAssignment>,
 }
 
 /// Compile a panel's lamps. With any issue, `edits` and `assignments` are empty.
@@ -92,7 +99,7 @@ pub fn compile_panel(input: &PanelCompileInput) -> PanelCompilation {
     let valid: Vec<bool> = (0..input.lamps.len()).map(|i| check_lamp(input, i, &mut out.issues)).collect();
     // Lamps that already hold a row keep it; only then do others pick one.
     for (i, lamp) in input.lamps.iter().enumerate().filter(|(i, _)| valid[*i]) {
-        if let Some(row) = lamp.current_row {
+        if let Some(row) = saved_row(input, lamp) {
             rows.reserve(&lamp.node_key, row);
             assigned[i] = Some(row);
         }
@@ -127,7 +134,23 @@ pub fn compile_panel(input: &PanelCompileInput) -> PanelCompilation {
         out.assignments.push(PanelRowAssignment { entry_id: lamp.entry_id.clone(), node_key: lamp.node_key.clone(), row });
     }
     group_edits_by_node(&mut out.edits);
+    out.released = input
+        .saved_rows
+        .iter()
+        .filter(|saved| !input.lamps.iter().any(|lamp| saved_row(input, lamp).is_some() && lamp.entry_id == saved.entry_id))
+        .cloned()
+        .collect();
     out
+}
+
+/// The saved row `lamp` keeps: its entry's saved row, only while the lamp stays on that row's board.
+fn saved_row(input: &PanelCompileInput, lamp: &PanelLampRequest) -> Option<u32> {
+    let key = canonical_node_key(&lamp.node_key);
+    input
+        .saved_rows
+        .iter()
+        .find(|s| s.entry_id == lamp.entry_id && canonical_node_key(&s.node_key) == key)
+        .map(|s| s.row)
 }
 
 fn lamp_issue(code: PanelIssueCode, lamp: &PanelLampRequest, detail: &str) -> PanelIssue {
@@ -176,7 +199,7 @@ fn check_lamp(input: &PanelCompileInput, index: usize, issues: &mut Vec<PanelIss
         issues.push(lamp_issue(PanelIssueCode::DuplicatePin, lamp, "Another lamp of this panel uses the same output."));
     }
     if let Some(output) = board.outputs.iter().find(|o| o.ordinal == lamp.output) {
-        let own_row = matches!(output.owner, Some(SignalOutputOwner::DirectLamp(row)) if lamp.current_row == Some(row));
+        let own_row = matches!(output.owner, Some(SignalOutputOwner::DirectLamp(row)) if saved_row(input, lamp) == Some(row));
         let own_facility = output.facility.as_ref().is_some_and(|f| f.facility_id == input.facility_id);
         if output.owner.is_some() && !own_row && !own_facility {
             let (code, detail) = match (output.owner, &output.facility) {

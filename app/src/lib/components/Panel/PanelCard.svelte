@@ -3,7 +3,7 @@
    * PanelCard — the Railroad-tab card for a Panel facility: name, type chip, derived status
    * and per-board waiting writes (from the effectiveLayoutStore facade), a sub line, and a
    * tile per block in panel order with its pin and live block occupancy. Tiles are read-only;
-   * Edit and Remove arrive with the editing slice.
+   * Edit and Remove emit intent with the facility id.
    */
   import type { Facility } from '$lib/api/facilities';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
@@ -14,8 +14,10 @@
   import StatusBadge from '$lib/components/Facilities/StatusBadge.svelte';
   import WriteOutcomeList from '$lib/components/Facilities/WriteOutcomeList.svelte';
 
-  let { facility, resolvedEventIds }: {
+  let { facility, resolvedEventIds, onEdit, onRemove }: {
     facility: Facility;
+    onEdit?: (facilityId: string) => void;
+    onRemove?: (facilityId: string) => void;
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
   } = $props();
 
@@ -55,6 +57,10 @@
     {:else}
       <StatusBadge tone={status.status === 'Wired' ? 'wired' : status.status === 'Incomplete' ? 'incomplete' : 'neutral'} text={statusText} />
     {/if}
+    <div class="actions">
+      <button type="button" class="btn-link" onclick={() => onEdit?.(facility.facilityId)} aria-label="Edit facility">Edit</button>
+      <button type="button" class="btn-link danger" onclick={() => onRemove?.(facility.facilityId)} aria-label="Remove facility">Remove</button>
+    </div>
   </header>
   {#if writeOutcome.hasWaiting}
     <WriteOutcomeList boards={writeOutcome.boards} />
@@ -115,6 +121,27 @@
   .type {
     font-size: 0.6875rem;
     color: var(--text-muted, #616161);
+  }
+  .actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--accent-color, #0f6cbd);
+    padding: 0.125rem 0.25rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    font-family: inherit;
+  }
+  .btn-link:hover {
+    text-decoration: underline;
+  }
+  .btn-link.danger {
+    color: #b91c1c;
   }
   .sub {
     display: flex;

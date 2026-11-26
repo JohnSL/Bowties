@@ -31,4 +31,28 @@ pub fn panel_lamp_rows(facility: &Facility, channels: &ChannelsDocument) -> Vec<
         .collect()
 }
 
+/// The saved row each panel entry's lamp channel is bound to, for the panel
+/// facility `facility`. Entries without a lamp channel, or whose channel is
+/// missing or not bound to a lamp row, contribute nothing.
+pub fn panel_saved_rows(facility: &Facility, channels: &ChannelsDocument) -> Vec<compiler::PanelRowAssignment> {
+    let Some(record) = facility.panel.as_ref().filter(|_| facility.template_id == "panel") else {
+        return Vec::new();
+    };
+    record
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.lamp_channel_id.as_ref()?;
+            match &channels.channels.iter().find(|c| &c.id == id)?.binding {
+                ChannelBinding::LampRow { node_key, row_ordinal } => Some(compiler::PanelRowAssignment {
+                    entry_id: entry.entry_id.clone(),
+                    node_key: node_key.clone(),
+                    row: *row_ordinal,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 pub mod compiler;

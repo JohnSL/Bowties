@@ -72,7 +72,7 @@ Rows the panel stops using are reset to the factory values the removal recipe de
 
 ## Editor state (frontend, transient)
 
-`{ facilityId?, name, step: blocks | wiring, litWhen, entries: [{ entryId, blockId, lamp?: { nodeKey, output, currentRow? }, litWhen? }], selectedEntryId?, boardChoice?, releases: [{ nodeKey, owner }], message? }` (releases use the existing `ReleaseRequest` shape; S4)
+`{ facilityId?, name, step: blocks | wiring, litWhen, entries: [{ entryId, blockId, lamp?: { nodeKey, output }, litWhen? }], selectedEntryId?, boardChoice?, mode: create | edit, releases: [{ nodeKey, owner }], pendingRelease?, message? }` (releases use the existing `ReleaseRequest` shape; S4)
 
 Pin click on the selected entry:
 

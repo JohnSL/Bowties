@@ -146,7 +146,7 @@ describe('Remove a saved Automatic Block Signals facility (E2b-T1)', () => {
 
     const dialog = await openRemove();
     expect(within(dialog).getByText(/02\.01\.57\.00\.00\.01/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Mast 1 and Logic 1/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/resets Mast 1 and Logic 1/)).toBeInTheDocument();
 
     // Cancel changes nothing
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -181,7 +181,6 @@ describe('Remove a saved Automatic Block Signals facility (E2b-T1)', () => {
     await setup(removalIpc(() => [issue]));
 
     await openRemove();
-    await fireEvent.click(within(removeDialog()!).getByRole('button', { name: 'Remove' }));
     const refused = await screen.findByRole('alert');
     expect(refused).toHaveTextContent('The Signal LCC settings could not be read');
     expect(card()).toBeInTheDocument();

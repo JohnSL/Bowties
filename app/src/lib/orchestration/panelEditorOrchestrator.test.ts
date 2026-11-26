@@ -1,18 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PanelWiringFacts, PinOwner } from '$lib/api/panels';
 
-const panelWiringFactsMock = vi.fn<(nodeKeys?: string[]) => Promise<PanelWiringFacts>>();
+const panelWiringFactsMock = vi.fn<(nodeKeys?: string[], release?: unknown[]) => Promise<PanelWiringFacts>>();
 vi.mock('$lib/api/panels', () => ({ panelWiringFacts: panelWiringFactsMock }));
 
 const createPanelFacilityMock = vi.fn();
+const updatePanelFacilityMock = vi.fn();
+const panelCardEntriesMock = vi.fn();
+vi.mock('$lib/layout', () => ({ effectiveLayoutStore: { panelCardEntries: panelCardEntriesMock } }));
 const syncDraftsMock = vi.fn(async () => undefined);
 vi.mock('$lib/orchestration/facilityOrchestrator', () => ({
   createPanelFacility: createPanelFacilityMock,
+  updatePanelFacility: updatePanelFacilityMock,
   syncDraftsForComposition: syncDraftsMock,
 }));
 
+const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
 const { panelEditorStore: store } = await import('$lib/stores/panelEditor.svelte');
-const { panelEditorActions: actions } = await import('$lib/orchestration/panelEditorOrchestrator');
+const { panelEditorActions: actions, panelEditorOrchestrator } = await import('$lib/orchestration/panelEditorOrchestrator');
+const panelEditorOrchestratorStartEdit = (id: string) => panelEditorOrchestrator.startEdit(id);
 
 const free: PinOwner = { kind: 'free' };
 const NODE = '050101010101';
@@ -30,6 +36,7 @@ function facts(owners: Record<number, PinOwner> = {}): PanelWiringFacts {
       })),
     }],
     issues: [],
+    releaseIssues: [],
   };
 }
 
@@ -91,13 +98,36 @@ describe('panelEditorOrchestrator wiring step', () => {
     expect(store.lampFor(a.entryId)).toBeNull();
   });
 
-  it('an outside-owned pin is not choosable and the message names its Lamp Description', async () => {
+  it('an outside-owned pin does not seat; it offers the release with the Lamp Description', async () => {
     const { a } = await openOnWiring({ 10: { kind: 'outside', row: 4, description: 'Yard lamp' } });
     actions.selectEntry(a.entryId);
     actions.pinClick(NODE, 10);
     expect(store.lampFor(a.entryId)).toBeNull();
-    expect(store.message?.kind).toBe('warn');
-    expect(store.message?.text).toContain('Yard lamp');
+    expect(store.pendingRelease).toEqual({
+      owner: { nodeKey: NODE, owner: 'Direct lamp 4' },
+      nodeKey: NODE,
+      output: 10,
+      description: 'Yard lamp',
+    });
+    actions.pinClick(NODE, 8);
+    expect(store.pendingRelease).toBeNull();
+  });
+
+  it('confirming a release seats the lamp, re-reads facts with the release, and Done passes it on', async () => {
+    const { a } = await openOnWiring({ 10: { kind: 'outside', row: 4, description: 'Yard lamp' } });
+    actions.selectEntry(a.entryId);
+    actions.pinClick(NODE, 10);
+    panelWiringFactsMock.mockResolvedValue({ ...facts(), releaseIssues: [{ nodeKey: NODE, detail: 'gone' }] });
+    await panelEditorOrchestrator.confirmRelease();
+    const released = [{ nodeKey: NODE, owner: 'Direct lamp 4' }];
+    expect(store.lampFor(a.entryId)).toEqual({ nodeKey: NODE, output: 10 });
+    expect(store.pendingRelease).toBeNull();
+    expect(panelWiringFactsMock).toHaveBeenLastCalledWith(undefined, released);
+    expect(store.boards[0].pins.find((p) => p.output === 10)?.owner).toEqual({ kind: 'free' });
+    expect(store.releaseIssues).toEqual([{ nodeKey: NODE, detail: 'gone' }]);
+    createPanelFacilityMock.mockResolvedValue({ ok: true });
+    await actions.finish();
+    expect(createPanelFacilityMock.mock.calls[0][0].release).toEqual(released);
   });
 
   it('changing board leaves the existing lamp until a pin is clicked', async () => {
@@ -192,5 +222,77 @@ describe('panelEditorOrchestrator empty panel', () => {
     await actions.goTo('wiring');
     expect(store.step).toBe('wiring');
     expect(store.boards).toHaveLength(1);
+  });
+});
+
+describe('panelEditorOrchestrator edit', () => {
+  const SAVED = 'fac-saved';
+
+  beforeEach(() => {
+    store.reset();
+    panelWiringFactsMock.mockReset();
+    createPanelFacilityMock.mockReset();
+    updatePanelFacilityMock.mockReset();
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: SAVED,
+        templateId: 'panel',
+        name: 'Saved panel',
+        slotBindings: {},
+        panel: {
+          litWhen: 'occupied',
+          entries: [
+            { entryId: 'e1', blockId: 'block:a', lampChannelId: 'l1' },
+            { entryId: 'e2', blockId: 'block:b', lampChannelId: 'l2' },
+          ],
+        },
+      },
+    ]);
+    panelCardEntriesMock.mockReturnValue([
+      {
+        entryId: 'e1', blockId: 'block:a', blockName: 'Block A', blockMissing: false,
+        lamp: { channelId: 'l1', nodeKey: NODE, boardName: 'Board 1', boardMissing: false, pin: 9, pinLabel: '#9 H3-G' },
+      },
+      {
+        entryId: 'e2', blockId: 'block:b', blockName: 'Block B', blockMissing: false,
+        lamp: { channelId: 'l2', nodeKey: NODE, boardName: 'Board 1', boardMissing: false, pin: null, pinLabel: '' },
+      },
+    ]);
+  });
+
+  it('Edit opens with both steps filled; a row with no pin opens with no lamp', () => {
+    panelEditorOrchestratorStartEdit(SAVED);
+    expect(store.mode).toBe('edit');
+    expect(store.facilityId).toBe(SAVED);
+    expect(store.name).toBe('Saved panel');
+    expect(store.step).toBe('blocks');
+    expect(store.entries.map((e) => [e.entryId, e.blockName])).toEqual([['e1', 'Block A'], ['e2', 'Block B']]);
+    expect(store.lampFor('e1')).toEqual({ nodeKey: NODE, output: 9 });
+    expect(store.lampFor('e2')).toBeNull();
+  });
+
+  it('Done in edit mode updates the facility with the same id and never creates', async () => {
+    panelEditorOrchestratorStartEdit(SAVED);
+    updatePanelFacilityMock.mockResolvedValue({ ok: true });
+    await actions.finish();
+    expect(createPanelFacilityMock).not.toHaveBeenCalled();
+    const args = updatePanelFacilityMock.mock.calls[0][0];
+    expect(args.facilityId).toBe(SAVED);
+    expect(args.name).toBe('Saved panel');
+    expect(args.record).toEqual({
+      litWhen: 'occupied',
+      entries: [{ entryId: 'e1', blockId: 'block:a' }, { entryId: 'e2', blockId: 'block:b' }],
+    });
+    expect(args.lamps).toEqual([{ entryId: 'e1', nodeKey: NODE, output: 9, name: 'Block A' }]);
+    expect(store.open).toBe(false);
+  });
+
+  it('Cancel in edit mode calls no facility function and leaves the saved panel unchanged', () => {
+    panelEditorOrchestratorStartEdit(SAVED);
+    actions.cancel();
+    expect(store.open).toBe(false);
+    expect(createPanelFacilityMock).not.toHaveBeenCalled();
+    expect(updatePanelFacilityMock).not.toHaveBeenCalled();
+    expect(facilitiesStore.facilities.find((f) => f.facilityId === SAVED)?.panel?.entries).toHaveLength(2);
   });
 });

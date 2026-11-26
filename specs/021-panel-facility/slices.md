@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 2/6
+Status: 3/6
 
 ## Architecture
 
@@ -91,7 +91,7 @@ flowchart LR
 | S1 | One-board panel, end to end | HITL | None | done |
 | S2 | Panel card and channel usage | AFK | S1 | done |
 | S3 | Blocks step and "lit when" | AFK | S1 | sketched |
-| S4 | Edit, release and remove | HITL | S1 | sketched |
+| S4 | Edit, release and remove | HITL | S1 | done |
 | S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | sketched |
 | S6 | Route all layout imports through the facade | REFACTOR | S5 | sketched |
 
@@ -216,6 +216,40 @@ flowchart LR
 
 **Architecture note** *(HITL)*: Lamp-row reset recipe and release through the existing `overlay_releases`. Removal must never touch pins the panel did not claim.
 
+**Status**: done
+
+**Re-cut after S2 (2026-11-26 pre-check)**: the card assumed more than exists. Only ABS can be removed (`compose_block_signals { remove: true }` → `release_from_layout` requires a `block_signals` record); the generic `deleteFacility` path would drop a panel's lamp channels but leave Lamp Selection set, so the pins would read "Outside Bowties". `compile_panel` has no input for the rows a panel held, so it never resets; `currentRow` comes from the request, not the layout. Panel compose and wiring facts pass an empty release list. The panel editor has no load-from-record path.
+
+**Decisions** *(approved 2026-11-26)*:
+- D1 (A): claims drive every reset. `compile_panel` takes the panel's saved rows from the effective layout (replaces request `currentRow`), keeps a row only when its lamp stays on the same board, and returns claimed-minus-assigned rows as release targets applied through `release_slots`. `release_from_layout` becomes the kind-agnostic `compose_facility_removal { facilityId }`; ABS removal moves onto it and `compose_block_signals`'s remove mode goes.
+- D2 (B): the removal compose returns its claim list next to edits and issues. The orchestrator previews the removal (sync, compose, refusal) before the dialog opens, then composes again on confirm and refuses on a mismatch. One kind-neutral `FacilityRemoveDialog` renders the claims through a pure util (pin label, "row N (no pin set)", Mast/Logic/Track Circuit). `facilityOrchestrator.removeFacility` is the only kind router; `FacilitiesSection` emits intent only.
+- D3 (A): panel wiring facts and compose accept `release` through `overlay_releases`; compose merges release edits and reports `releaseInvalid`. The ABS outside-owner card and its two-step confirm move to a shared presentational `SignalLcc/` component, released-owner dedupe to a pure `utils/` helper; both Wiring steps use them. Facts are re-fetched after a release.
+
+**UI contract**: [mockups.html](mockups.html) `#railroad` (card Edit) and `#wiring` (outside pins, Release). Allowed S4 differences: Release uses the shared ABS outside-owner card instead of the mockup's inline "Release pin" note (D3); Remove has no mockup and uses the shared Dialog shell with the per-board claim list (D2); the card gets Remove beside Edit.
+
+**Complexity**: large
+**User stories**: US3 (scenarios 1–4), US2 scenario 4 (Edit opens both steps filled)
+
+**Tasks**:
+- [x] S4-T1: Integration tests. Frontend (`RailroadPanel.panel.integration.test.ts`): a saved panel's Edit opens both steps filled; moving a lamp #6 → #12 on the same board stages only Lamp Selection on the kept row; removing a block stages a reset of its row (Lamp Selection 0, empty description, fresh On/Off) and leaves the block and an ABS facility sharing it unchanged; Cancel on an existing panel leaves no drafts; Remove on the card opens the dialog naming pins per board, confirm resets only those rows, the lamp channels leave the Channels panel and the blocks remain; an outside pin can be seated only after Release, and the release edits are staged with Done. Rust: `panel_compiler.rs` dropped rows and cross-board move; `compose_facility_removal` for a panel and for ABS (same edits as today's ABS removal).
+- [x] S4-T2: Core panel compiler (D1). `PanelCompileInput` gains the saved rows `{entryId, nodeKey, row}`; keep a row only for a same-board lamp; return `released` DirectLamp targets for claimed-minus-assigned rows. Unit tests.
+- [x] S4-T3: Backend panel compose and facts (D1, D3). `compose_panel` reads saved rows from the effective layout (drop request `currentRow`), indexes the saved rows' boards, applies `release_slots` to the dropped rows (`ClaimedSlotUnavailable` blocks), accepts `release` (`releaseInvalid` first, `merge_release_edits`); `panel_wiring_facts` accepts `release` so released pins read free. Rust tests.
+- [x] S4-T4: Backend `compose_facility_removal { facilityId }` (D1, D2): any facility with claims; returns edits, claims, Logic placement and issues. Remove `compose_block_signals`'s remove mode. Register in `lib.rs`. Rust tests (panel + ABS parity).
+- [x] S4-T5: Frontend API and utils. `api/panels.ts` (`release`, no `currentRow`); `composeFacilityRemoval` in the API layer; `utils/facilityRemovalText.ts` (claims → per-board text); `utils/releasedOwners.ts` (dedupe on canonical node key, used by both editor stores). Unit tests.
+- [x] S4-T6: `facilityOrchestrator`. `updatePanelFacility` on the staging transaction (record, rebind on board change, attach new lamps; dropped lamp channels detached and removed in commit). `previewFacilityRemoval` + `removeFacility({facilityId, leaveBoard})` as the only removal router, replacing `removeBlockSignalsFacility` and the ABS branch in `deleteFacility`. Orchestrator tests; ABS removal tests stay green.
+- [x] S4-T7: `panelEditor` store and orchestrator: `startEdit(facilityId)` from the saved record (pins from effective Lamp Selection, keeps the facility ID), `releases` + `releaseAndSeat`, facts re-fetched with releases, Done → update in edit mode, Cancel leaves the panel unchanged. Store and orchestrator tests.
+- [x] S4-T8: Components. Shared `SignalLcc/` outside-owner release card extracted from ABS `WiringStep` (ABS tests stay green); Panel `WiringStep` uses it. `Facilities/FacilityRemoveDialog` replaces `BlockSignalsRemoveDialog`. `PanelCard` Edit and Remove; `FacilitiesSection` emits intent only and mounts the dialog from the preview. Component tests.
+- [x] S4-T9: Docs. ADR-0012 extension (kind-agnostic removal command, removal preview, panel edit releases claimed-minus-assigned, panel requests carry `release`); ADR-0013 extension (saved row read from the layout); spec FR-015 wording; data-model.md and contracts/tauri-ipc.md; aiwiki owners, flows and seams (Facility Bowtie Lifecycle, Slot Binding Spec 021 note, Progressive Proposal panel consumer). Mockup Release presentation left to the user.
+- [x] S4-T10: Validate. `cargo test -p bowties-core`; app crate tests; vitest; svelte-check (baseline 113/2); clippy on new code. Changed-file set against the expected surface. Running-app check against `#railroad` and `#wiring`; bench: move #6 → #12 and remove a panel on a Signal LCC.
+
+**S4 validation record (2026-11-26)**:
+- Automated: bowties-core `cargo test` green (562 lib + all integration suites, incl. `panel_compiler.rs` 14). App crate `cargo test --lib` 145 passed, 2 failed: the known pre-existing `events::router` and `profile::loader` failures. vitest 154 files / 1896 tests green in the full run. svelte-check 113 errors / 2 warnings (baseline). Clippy: no findings in the slice's files (one unused test-only import fixed); other crate lints pre-existing.
+- Built: core `compile_panel` takes saved rows from the layout and returns dropped rows; backend panel compose resets them via `release_slots` and both panel commands accept `release`; kind-agnostic `compose_facility_removal` returns `claims` (ABS removal moved onto it); `facilityOrchestrator.updatePanelFacility`, `previewFacilityRemoval`, `removeFacility` (only removal router); panel editor `startEdit`, release state and flow; shared `SignalLcc/OutsideOwnerRelease` (extracted from ABS) and `Facilities/FacilityRemoveDialog` (replaces `BlockSignalsRemoveDialog`); `utils/facilityRemovalText`, `utils/releasedOwners`; PanelCard Edit/Remove. Refactor: one `index_effective_trees` helper for three tree-indexing loops.
+- Audit notes: Behavior "dropped entries released" (T2) and the release pass-through tests (T6/T8b) passed on first run (covered by earlier greens) and were proved by mutation; the Release flow red was proved by neutralising the implementation. The "Remove" and release Railroad walks were written after their UI and have no observed red.
+- Differences from the mockups: Release uses the shared ABS outside-owner card instead of the inline note (`#wiring`, D3); Remove has no mockup and uses the shared Dialog with per-board claims (D2); PanelCard has Edit and Remove link buttons.
+- Follow-ups (backlog): removal sequencing in `FacilitiesSection` should move behind an orchestrator action; no Rust test for ABS removal with Logic placement; the five new Panel walks carry the 15 s stopgap timeout.
+- 2026-11-26 user check: running app and bench confirmed (edit, same-board move, block removal, Cancel, Release, Remove). S4 closed.
+
 ### S5: Migrate Block Indicators and retire them [HITL]
 
 **Intent**: Layouts with Block Indicators open as panels, with the lamps still working and nothing written to the boards.
@@ -247,4 +281,4 @@ flowchart LR
 - [ ] A guard test fails if a route or component imports an edit-layer store directly.
 - [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
 
-<!-- Session: 2026-11-26 — S1, S2 done. Next: S3 (AFK; re-pointing has no mockup UI, ask the user) or S4 (HITL). -->
+<!-- Session: 2026-11-26 — S1, S2, S4 done. Next: S3 (AFK; re-pointing has no mockup UI, ask the user) or S5 (HITL). -->

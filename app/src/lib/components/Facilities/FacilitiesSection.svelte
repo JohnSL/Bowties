@@ -7,15 +7,14 @@
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
-  import BlockSignalsRemoveDialog from './BlockSignalsRemoveDialog.svelte';
+  import FacilityRemoveDialog from './FacilityRemoveDialog.svelte';
   import BlockSignalsEditor from '$lib/components/BlockSignals/BlockSignalsEditor.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import { blockSignalsEditorStore } from '$lib/stores/blockSignalsEditor.svelte';
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
-  import { resolveNodeParts } from '$lib/layout';
-  import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
-  import { facilityBoardSlots } from '$lib/utils/facilityBoardSlots';
+  import { removalConfirmationGroups } from '$lib/utils/facilityRemovalText';
+import type { FacilityRemovalClaim } from '$lib/api/facilities';
   import { issueText } from '$lib/components/BlockSignals/wiringText';
   import { blockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
   import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
@@ -47,27 +46,56 @@
 
   let showAddDialog = $state(false);
 
-  // Spec 020 / E2b: the Automatic Block Signals removal awaiting confirmation.
-  let removal = $state<{ facilityId: string; reason?: string; error?: string } | null>(null);
+  // The removal awaiting confirmation: the claims the user was shown, or why the board can't be reset.
+  let removal = $state<{
+    facilityId: string;
+    claims: FacilityRemovalClaim[];
+    reason?: string;
+    error?: string;
+    busy?: boolean;
+  } | null>(null);
   const removalFacility = $derived(
     removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
   );
-  const removalBoards = $derived(
-    (removalFacility ? facilityBoardSlots(removalFacility, facilitiesStore.logicPlacement) : []).map((group) => ({
-      name: resolveNodeParts(group.nodeKey).name || nodeIdToDisplayHex(group.nodeKey) || group.nodeKey,
-      slots: group.slots,
-    })),
+  const removalGroups = $derived(
+    removalConfirmationGroups(removal?.claims ?? [], {
+      boardName: (nodeKey) => effectiveLayoutStore.boardName(nodeKey),
+      pinLabel: (nodeKey, lampSelection) => effectiveLayoutStore.signalPinLabel(nodeKey, lampSelection),
+    }),
   );
+
+  async function startRemoval(facilityId: string) {
+    const preview = await facilityOrchestrator.previewFacilityRemoval(facilityId);
+    if (!preview.ok) {
+      console.error('[facility] previewFacilityRemoval failed', preview.error);
+      removal = { facilityId, claims: [], reason: 'The board settings could not be checked.' };
+    } else if (preview.issues.length > 0) {
+      removal = { facilityId, claims: preview.claims, reason: preview.issues.map((issue) => issueText(issue, [])).join(' ') };
+    } else if (preview.claims.length === 0) {
+      // Nothing to reset: no confirmation, the generic removal path.
+      await facilityOrchestrator.removeFacility({ facilityId }).catch((err) => {
+        console.error('[facility] removeFacility failed', err);
+      });
+    } else {
+      removal = { facilityId, claims: preview.claims };
+    }
+  }
 
   async function confirmRemoval(leaveBoard: boolean) {
     if (!removal) return;
-    const result = await facilityOrchestrator.removeBlockSignalsFacility({ facilityId: removal.facilityId, leaveBoard });
+    const { facilityId, claims } = removal;
+    removal = { ...removal, busy: true };
+    const result = await facilityOrchestrator.removeFacility({ facilityId, leaveBoard, previewedClaims: claims });
     if (result.ok) {
       removal = null;
+    } else if ('planChanged' in result) {
+      // The board changed since the preview: show the fresh plan to confirm again.
+      await startRemoval(facilityId);
+      if (removal && !removal.reason) removal = { ...removal, error: 'The board changed while this was open. Check the list and confirm again.' };
     } else if ('issues' in result) {
-      removal = { facilityId: removal.facilityId, reason: result.issues.map((issue) => issueText(issue, [])).join(' ') };
+      removal = { facilityId, claims, reason: result.issues.map((issue) => issueText(issue, [])).join(' ') };
     } else {
-      removal = { facilityId: removal.facilityId, error: 'The facility could not be removed. Try again.' };
+      removal = { facilityId, claims, error: 'The facility could not be removed. Try again.' };
     }
   }
 
@@ -142,18 +170,7 @@
     facilitiesStore.renameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
-    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-    if (facility?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && facility.blockSignals) {
-      removal = { facilityId };
-      return;
-    }
-    // Spec 018 / S6 — route through the orchestrator so composed
-    // bowties are torn down before the facility is removed. Calling
-    // `facilitiesStore.deleteFacility` directly would leave orphan
-    // bowtie metadata rows tagged with `createdByFacility === id`.
-    facilityOrchestrator.deleteFacility(facilityId).catch((err) => {
-      console.error('[facility] deleteFacility failed', err);
-    });
+    void startRemoval(facilityId);
   }
 </script>
 
@@ -181,7 +198,7 @@
       {#each facilitiesStore.facilities as facility (facility.facilityId)}
         <li>
           {#if facility.templateId === PANEL_TEMPLATE_ID}
-            <PanelCard {facility} {resolvedEventIds} />
+            <PanelCard {facility} {resolvedEventIds} onEdit={panelEditorActions.startPanelEdit} onRemove={handleDelete} />
           {:else}
           <FacilityCard
             {facility}
@@ -211,14 +228,14 @@
     />
   {/if}
 
-  {#if removal && removalFacility?.blockSignals}
-    <BlockSignalsRemoveDialog
+  {#if removal && removalFacility}
+    <FacilityRemoveDialog
       facilityName={removalFacility.name}
-      boards={removalBoards}
+      groups={removalGroups}
       reason={removal.reason}
       error={removal.error}
-      onConfirm={() => confirmRemoval(false)}
-      onConfirmLeaveBoard={() => confirmRemoval(true)}
+      busy={removal.busy}
+      onConfirm={confirmRemoval}
       onCancel={() => (removal = null)}
     />
   {/if}

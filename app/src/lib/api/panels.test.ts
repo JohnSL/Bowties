@@ -23,6 +23,7 @@ describe('panelWiringFacts', () => {
         ],
       }],
       issues: [{ nodeKey: '050101010800', detail: 'not loaded' }],
+      releaseIssues: [],
     };
     invokeMock.mockResolvedValue(facts);
 
@@ -34,9 +35,28 @@ describe('panelWiringFacts', () => {
 
   it('omits nodeKeys to ask for every board', async () => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue({ boards: [], issues: [] });
+    invokeMock.mockResolvedValue({ boards: [], issues: [], releaseIssues: [] });
     await panelWiringFacts();
     expect(invokeMock).toHaveBeenCalledWith('panel_wiring_facts', { request: {} });
+  });
+});
+
+describe('panelWiringFacts release', () => {
+  it('sends named releases so released outside pins read as free, and returns release issues', async () => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue({
+      boards: [],
+      issues: [],
+      releaseIssues: [{ nodeKey: '050101010700', detail: 'claimed' }],
+    });
+    const release = [{ nodeKey: '050101010700', owner: 'Direct lamp 4' }];
+
+    const result = await panelWiringFacts(['050101010700'], release);
+
+    expect(invokeMock).toHaveBeenCalledWith('panel_wiring_facts', {
+      request: { nodeKeys: ['050101010700'], release },
+    });
+    expect(result.releaseIssues[0].detail).toBe('claimed');
   });
 });
 

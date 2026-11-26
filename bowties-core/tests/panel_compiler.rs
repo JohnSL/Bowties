@@ -31,12 +31,11 @@ fn entry(id: &str, block: &str) -> PanelEntry {
     PanelEntry { entry_id: id.into(), block_id: block.into(), lamp_channel_id: None, lit_when: None }
 }
 
-fn lamp(entry_id: &str, pin: u32, current_row: Option<u32>) -> PanelLampRequest {
+fn lamp(entry_id: &str, pin: u32) -> PanelLampRequest {
     PanelLampRequest {
         entry_id: entry_id.into(),
         node_key: NODE.into(),
         output: pin,
-        current_row,
         name: format!("Lamp {entry_id}"),
     }
 }
@@ -53,6 +52,7 @@ fn input(lamps: Vec<PanelLampRequest>) -> PanelCompileInput {
             entries: vec![entry("e1", "b1"), entry("e2", "b2"), entry("e3", "b3")],
         },
         lamps,
+        saved_rows: vec![],
         occupancy: vec![events("b1", 1), events("b2", 2), events("b3", 3)],
         boards: vec![board(NODE)],
     }
@@ -71,7 +71,7 @@ fn assert_resolves(edits: &[NodeConfigEdit]) {
 
 #[test]
 fn three_blocks_wired_to_pins_edit_only_their_rows() {
-    let out = compile_panel(&input(vec![lamp("e1", 9, None), lamp("e2", 3, None), lamp("e3", 14, None)]));
+    let out = compile_panel(&input(vec![lamp("e1", 9), lamp("e2", 3), lamp("e3", 14)]));
     assert!(out.issues.is_empty(), "{:?}", out.issues);
     let rows: Vec<u32> = out.assignments.iter().map(|a| a.row).collect();
     assert_eq!(rows, vec![9, 3, 14]);
@@ -91,7 +91,7 @@ fn three_blocks_wired_to_pins_edit_only_their_rows() {
 
 #[test]
 fn clear_lit_when_swaps_on_and_off_and_entry_override_wins() {
-    let mut i = input(vec![lamp("e1", 9, None), lamp("e2", 3, None)]);
+    let mut i = input(vec![lamp("e1", 9), lamp("e2", 3)]);
     i.record.lit_when = LitWhen::Clear;
     i.record.entries[1].lit_when = Some(LitWhen::Occupied);
     let out = compile_panel(&i);
@@ -107,7 +107,8 @@ fn owned_by_outside_row(b: &mut PanelBoardFacts, row: u32, pin: u32) {
 
 #[test]
 fn lamp_keeps_its_current_row_even_when_row_differs_from_pin() {
-    let mut i = input(vec![lamp("e1", 5, Some(2))]);
+    let mut i = input(vec![lamp("e1", 5)]);
+    i.saved_rows = vec![saved("e1", NODE, 2)];
     owned_by_outside_row(&mut i.boards[0], 2, 5);
     i.boards[0].outputs[4].facility = Some(OutputFacility { facility_id: PANEL.into(), name: "Panel".into() });
     let out = compile_panel(&i);
@@ -118,7 +119,7 @@ fn lamp_keeps_its_current_row_even_when_row_differs_from_pin() {
 
 #[test]
 fn row_matching_pin_taken_falls_back_to_lowest_free_row() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     // Row 9 selects pin 4 outside Bowties; row 1 is the lowest free row.
     owned_by_outside_row(&mut i.boards[0], 9, 4);
     let out = compile_panel(&i);
@@ -128,7 +129,7 @@ fn row_matching_pin_taken_falls_back_to_lowest_free_row() {
 
 #[test]
 fn rows_all_in_use_reports_no_free_lamp_row() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     i.boards[0].direct_lamp_rows = vec![1, 2];
     i.boards[0].claimed_rows = vec![1];
     owned_by_outside_row(&mut i.boards[0], 2, 4);
@@ -150,7 +151,7 @@ fn assert_nothing_compiled(out: &PanelCompilation) {
 fn pin_owned_by_another_facility_blocks() {
     let other = Some(OutputFacility { facility_id: "abs:other".into(), name: "Main".into() });
     for owner in [SignalOutputOwner::Mast(1), SignalOutputOwner::DirectLamp(7)] {
-        let mut i = input(vec![lamp("e1", 9, None)]);
+        let mut i = input(vec![lamp("e1", 9)]);
         i.boards[0].outputs[8].owner = Some(owner);
         i.boards[0].outputs[8].facility = other.clone();
         let out = compile_panel(&i);
@@ -162,7 +163,7 @@ fn pin_owned_by_another_facility_blocks() {
 
 #[test]
 fn pin_owned_by_unclaimed_lamp_row_needs_release() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     owned_by_outside_row(&mut i.boards[0], 4, 9);
     let out = compile_panel(&i);
     assert_eq!(codes(&out), vec![PanelIssueCode::PinOutsideNotReleased]);
@@ -171,7 +172,7 @@ fn pin_owned_by_unclaimed_lamp_row_needs_release() {
 
 #[test]
 fn pin_owned_by_this_panels_own_row_is_not_elsewhere() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     owned_by_outside_row(&mut i.boards[0], 4, 9);
     i.boards[0].outputs[8].facility = Some(OutputFacility { facility_id: PANEL.into(), name: "Panel".into() });
     let out = compile_panel(&i);
@@ -180,7 +181,7 @@ fn pin_owned_by_this_panels_own_row_is_not_elsewhere() {
 
 #[test]
 fn same_pin_twice_on_a_node_is_duplicate() {
-    let out = compile_panel(&input(vec![lamp("e1", 9, None), lamp("e2", 9, None)]));
+    let out = compile_panel(&input(vec![lamp("e1", 9), lamp("e2", 9)]));
     assert_eq!(codes(&out), vec![PanelIssueCode::DuplicatePin]);
     assert_eq!(out.issues[0].entry_id.as_deref(), Some("e2"));
     assert_nothing_compiled(&out);
@@ -188,7 +189,7 @@ fn same_pin_twice_on_a_node_is_duplicate() {
 
 #[test]
 fn block_without_both_events_is_unresolved() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     i.occupancy[0].clear = None;
     let out = compile_panel(&i);
     assert_eq!(codes(&out), vec![PanelIssueCode::BlockEventsUnresolved]);
@@ -197,7 +198,7 @@ fn block_without_both_events_is_unresolved() {
 
 #[test]
 fn lamp_on_a_node_without_facts_is_board_unavailable() {
-    let mut i = input(vec![lamp("e1", 9, None)]);
+    let mut i = input(vec![lamp("e1", 9)]);
     i.boards.clear();
     let out = compile_panel(&i);
     assert_eq!(codes(&out), vec![PanelIssueCode::BoardUnavailable]);
@@ -207,7 +208,7 @@ fn lamp_on_a_node_without_facts_is_board_unavailable() {
 #[test]
 fn edits_for_two_boards_are_grouped_per_node() {
     const OTHER: &str = "050101010701";
-    let mut i = input(vec![lamp("e1", 9, None), lamp("e2", 3, None), lamp("e3", 5, None)]);
+    let mut i = input(vec![lamp("e1", 9), lamp("e2", 3), lamp("e3", 5)]);
     i.lamps[1].node_key = OTHER.into();
     i.boards.push(board(OTHER));
     let out = compile_panel(&i);
@@ -216,4 +217,38 @@ fn edits_for_two_boards_are_grouped_per_node() {
     assert_eq!(nodes.iter().filter(|n| **n == NODE).count(), 8);
     let switches = nodes.windows(2).filter(|w| w[0] != w[1]).count();
     assert_eq!(switches, 1, "edits are contiguous per node: {nodes:?}");
+}
+
+fn saved(entry: &str, node: &str, row: u32) -> PanelRowAssignment {
+    PanelRowAssignment { entry_id: entry.into(), node_key: node.into(), row }
+}
+
+#[test]
+fn same_board_lamp_keeps_saved_row_and_cross_board_lamp_releases_old_row() {
+    const OTHER: &str = "050101010701";
+    let mut i = input(vec![lamp("e1", 9), lamp("e2", 3)]);
+    i.lamps[1].node_key = OTHER.into();
+    i.boards.push(board(OTHER));
+    // e1 stays on NODE row 2 (pin moved to 9); e2 was on NODE row 3 and now sits on OTHER.
+    i.saved_rows = vec![saved("e1", NODE, 2), saved("e2", NODE, 3)];
+    let out = compile_panel(&i);
+    assert!(out.issues.is_empty(), "{:?}", out.issues);
+    assert_eq!(out.assignments, vec![saved("e1", NODE, 2), saved("e2", OTHER, 3)]);
+    assert_eq!(edit(&out.edits, "Direct Lamp Control/Lamp[2]/Lamp Selection"), &EditValue::Int { value: 9 });
+    assert_eq!(out.released, vec![saved("e2", NODE, 3)]);
+}
+
+#[test]
+fn saved_rows_of_removed_or_lampless_entries_are_released_and_kept_rows_are_not() {
+    let mut i = input(vec![lamp("e1", 9)]);
+    // e1 kept; e2 has no lamp now; e9 is no longer an entry of the panel.
+    i.saved_rows = vec![saved("e1", NODE, 2), saved("e2", NODE, 3), saved("e9", NODE, 4)];
+    let out = compile_panel(&i);
+    assert!(out.issues.is_empty(), "{:?}", out.issues);
+    assert_eq!(out.released, vec![saved("e2", NODE, 3), saved("e9", NODE, 4)]);
+
+    i.lamps.clear();
+    let out = compile_panel(&i);
+    assert!(out.issues.is_empty() && out.edits.is_empty() && out.assignments.is_empty());
+    assert_eq!(out.released, i.saved_rows);
 }

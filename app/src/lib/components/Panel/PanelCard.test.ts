@@ -1,6 +1,6 @@
 /** Panel card on the Railroad tab (Spec 021 / S1, S2): head, sub line, lamp tiles with live state, honest status. */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import type { Facility } from '$lib/api/facilities';
 import type { InformationChannel } from '$lib/api/channels';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
@@ -61,9 +61,9 @@ const resolved = new Map<string, Record<string, string>>([
   ['b1', { occupied: 'B1_OCC', clear: 'B1_CLR' }],
 ]);
 
-function show(facility: Facility) {
+function show(facility: Facility, handlers: { onEdit?: (id: string) => void; onRemove?: (id: string) => void } = {}) {
   facilitiesStore.hydrateBaseline([facility]);
-  render(PanelCard, { props: { facility, resolvedEventIds: resolved } });
+  render(PanelCard, { props: { facility, resolvedEventIds: resolved, ...handlers } });
 }
 
 function seedWired() {
@@ -79,6 +79,17 @@ beforeEach(() => {
 });
 
 describe('PanelCard', () => {
+  it('emits the facility id for Edit and for Remove', async () => {
+    const onEdit = vi.fn();
+    const onRemove = vi.fn();
+    show(panel([]), { onEdit, onRemove });
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit facility' }));
+    expect(onEdit).toHaveBeenCalledWith('p-1');
+    expect(onRemove).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove facility' }));
+    expect(onRemove).toHaveBeenCalledWith('p-1');
+  });
+
   it('shows an empty panel as Empty with "No blocks yet." and no Edit hint', () => {
     show(panel([]));
     expect(screen.getByText('Eagle Creek fascia')).toBeTruthy();
@@ -101,7 +112,7 @@ describe('PanelCard', () => {
     expect(within(tiles[1]).getByLabelText('No reading')).toBeTruthy();
   });
 
-  it('lists tiles in panel order with the pin label from Lamp Selection and the block reading; no buttons', () => {
+  it('lists tiles in panel order with the pin label from Lamp Selection and the block reading, then Edit and Remove', () => {
     seedWired();
     show(panel([
       { entryId: 'e2', blockId: 'b2', lampChannelId: 'l2' },
@@ -115,7 +126,7 @@ describe('PanelCard', () => {
     expect(tiles[0]).toHaveTextContent('#3 H1-R · no reading');
     expect(tiles[1]).toHaveTextContent('Cedar Hill');
     expect(tiles[1]).toHaveTextContent('#9 H3-G · no reading');
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Edit', 'Remove']);
   });
 
   it('colours the tile dot from the block occupancy, the same indicator as the Channels panel, with no second dot', () => {

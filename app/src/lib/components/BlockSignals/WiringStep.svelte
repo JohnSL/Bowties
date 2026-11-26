@@ -5,7 +5,6 @@
    * and green lamps, with the problems the last check found. It renders the
    * store's view and emits wiring intents; the check itself is the store's.
    */
-  import { tick } from 'svelte';
   import type { SignalOutputHost } from '$lib/api/signaling';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -14,6 +13,7 @@
   import type { BlockSignalsEditorView } from '$lib/stores/blockSignalsEditor.svelte';
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
   import SignalLccPicker from '$lib/components/SignalLcc/SignalLccPicker.svelte';
+  import OutsideOwnerRelease from '$lib/components/SignalLcc/OutsideOwnerRelease.svelte';
   import PinGrid, { type PinGridPinView, type PinGridState } from '$lib/components/SignalLcc/PinGrid.svelte';
   import { signalLccName as hostName } from '$lib/components/SignalLcc/signalLccLabel';
   import TrackDiagram from './TrackDiagram.svelte';
@@ -172,20 +172,7 @@
   });
 
   let pinGrid = $state<HTMLElement | null>(null);
-  /** The details card is showing the release confirmation instead of the details. */
-  let confirmingRelease = $state(false);
-  let releaseButton = $state<HTMLButtonElement | null>(null);
-  $effect(() => {
-    inspectedOwner;
-    confirmingRelease = false;
-  });
-
   const logicList = (numbers: number[]) => numbers.map((n) => `Logic ${n}`).join(', ');
-
-  function cancelRelease(): void {
-    confirmingRelease = false;
-    void tick().then(() => releaseButton?.focus());
-  }
 
   /** Release the inspected owner and put the lamp on the clicked pin: its own lamp, else the selected one. */
   function releaseAndUse(card: NonNullable<typeof inspected>, ordinal: number): void {
@@ -203,14 +190,6 @@
     const pin = [...(pinGrid?.querySelectorAll<HTMLButtonElement>('button[data-owner]') ?? [])]
       .find((button) => button.dataset.owner === owner);
     pin?.focus();
-  }
-
-  /** Escape closes only the card; the editor dialog listens for Escape on the window. */
-  function cardKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape') return;
-    event.stopPropagation();
-    event.preventDefault();
-    closeCard();
   }
 
   /** The pin the user clicked to open the card; the lamp goes there when the release is confirmed. */
@@ -332,51 +311,28 @@
           />
           {#if inspected}
             {@const card = inspected}
-            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <section class="outside-card" aria-label={`${card.owner}, not managed by Bowties`} onkeydown={cardKeydown}>
-              <button type="button" class="card-close" aria-label={`Close ${card.owner} details`} onclick={closeCard}>×</button>
-              <h4>{card.owner} <span class="outside-tag">Not managed by Bowties</span></h4>
-              <p>{card.description ? `Description: "${card.description}"` : 'No description.'}</p>
-              <p>{card.isMast ? 'Rule to Aspect' : 'Direct Lamp Control row'} · drives {card.pins.map((pin) => pin.label).join(', ')}</p>
-              {#if card.isMast && card.matchedLogic.length > 0}
-                <p>Aspects set by {logicList(card.matchedLogic)}</p>
-              {/if}
-              <p>Configured on {hostName(host.nodeKey)} outside Bowties, for example by hand, by another tool, or in earlier testing.</p>
-              {#if confirmingRelease}
-                {@const resets = [card.owner, ...card.matchedLogic.filter((n) => !card.keptLogic.includes(n)).map((n) => `Logic ${n}`)]}
-                {@const pinLabels = card.pins.map((pin) => pin.label).join(', ')}
-                <p>Release {card.owner}? {card.pins.length > 1 ? `All ${card.pins.length} of its pins` : 'Its pin'} ({pinLabels}) {card.pins.length > 1 ? 'become' : 'becomes'} free, and {resets.join(', ')} {resets.length > 1 ? 'are' : 'is'} reset when you save. Discard undoes it.</p>
-                {#each card.keptLogic as n (n)}
-                  <p>Logic {n} also sends other events, so it is kept; only its actions that set {card.owner}'s aspects are disconnected.</p>
-                {/each}
-                {#if card.isMast}
-                  <p>Other boards or JMRI may still send events to {card.owner}.</p>
-                {/if}
-                <div class="outside-actions">
-                  <button type="button" class="btn" onclick={cancelRelease}>Cancel</button>
-                  <button type="button" class="btn btn-primary" onclick={() => releaseAndUse(card, inspectedPin ?? card.pins[0].ordinal)}>
-                    {#if inspectedLamp}
-                      Release {card.owner}
-                    {:else}
-                      Release and put {selectedLamp === 'red' ? 'Red' : 'Green'} on {pinLabel(inspectedPin ?? card.pins[0].ordinal)}
-                    {/if}
-                  </button>
-                </div>
-              {:else}
-              <div class="outside-actions">
-                {#if card.target}
-                  {@const target = card.target}
-                  <button
-                    type="button"
-                    class="btn"
-                    aria-label={`Show ${card.owner} in Configuration`}
-                    onclick={() => configFocusStore.focusConfigField(target.nodeId, target.elementPath)}
-                  >Show in Configuration</button>
-                {/if}
-                <button type="button" class="btn" bind:this={releaseButton} onclick={() => (confirmingRelease = true)}>Release and use…</button>
-              </div>
-              {/if}
-            </section>
+            {@const target = card.target}
+            <OutsideOwnerRelease
+              owner={card.owner}
+              description={card.description}
+              details={[
+                `${card.isMast ? 'Rule to Aspect' : 'Direct Lamp Control row'} · drives ${card.pins.map((pin) => pin.label).join(', ')}`,
+                ...(card.isMast && card.matchedLogic.length > 0 ? [`Aspects set by ${logicList(card.matchedLogic)}`] : []),
+                `Configured on ${hostName(host.nodeKey)} outside Bowties, for example by hand, by another tool, or in earlier testing.`,
+              ]}
+              pinLabels={card.pins.map((pin) => pin.label)}
+              resets={[card.owner, ...card.matchedLogic.filter((n) => !card.keptLogic.includes(n)).map((n) => `Logic ${n}`)]}
+              keptLogic={card.keptLogic}
+              mentionsOtherSenders={card.isMast}
+              releaseLabel={inspectedLamp
+                ? `Release ${card.owner}`
+                : `Release and put ${selectedLamp === 'red' ? 'Red' : 'Green'} on ${pinLabel(inspectedPin ?? card.pins[0].ordinal)}`}
+              onRelease={() => releaseAndUse(card, inspectedPin ?? card.pins[0].ordinal)}
+              onClose={closeCard}
+              onShowInConfiguration={target
+                ? () => configFocusStore.focusConfigField(target.nodeId, target.elementPath)
+                : undefined}
+            />
           {/if}
           {/if}
         {:else}
@@ -413,18 +369,4 @@
   .lamp-row.active .lamp-pick { border: 2px solid var(--abs-brand); padding: 4px 7px; background: var(--abs-selected); font-weight: 650; }
   .lamp-pin { color: var(--abs-muted); font-weight: 400; }
   .lamp-pin.none { font-style: italic; }
-  .outside-card h4 { padding-right: 28px; }
-  .card-close {
-    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
-    display: inline-flex; align-items: center; justify-content: center; padding: 0;
-    border: none; border-radius: 4px; background: transparent; color: var(--abs-muted);
-    font-size: 16px; line-height: 1; cursor: pointer;
-  }
-  .card-close:hover { background: #f3e6c4; color: var(--abs-text); }
-  .card-close:focus-visible { outline: 2px solid var(--abs-brand); outline-offset: 1px; }
-  .outside-card { position: relative; margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
-  .outside-card h4 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
-  .outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
-  .outside-card p { margin: 2px 0; color: var(--abs-text-secondary); }
-  .outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 </style>

@@ -5,7 +5,7 @@ import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import { BOARD_NODE, OTHER_BOARD_NODE, wiringFacts } from './panelEditorTestSupport';
 
-const panelWiringFactsMock = vi.fn<(nodeKeys?: string[]) => Promise<PanelWiringFacts>>();
+const panelWiringFactsMock = vi.fn<(nodeKeys?: string[], release?: unknown[]) => Promise<PanelWiringFacts>>();
 vi.mock('$lib/api/panels', () => ({ panelWiringFacts: panelWiringFactsMock }));
 const createPanelFacilityMock = vi.fn();
 vi.mock('$lib/orchestration/facilityOrchestrator', () => ({
@@ -104,18 +104,45 @@ describe('Panel editor Wiring step', () => {
     expect(pin(/^#9 H3-G: Used by Main 1/)).toBeDisabled();
   });
 
-  it('disables pins used by another facility and shows outside pins without making them choosable', async () => {
+  it('disables pins used by another facility and shows outside pins by their Lamp Description', async () => {
     await openOnWiring({
       1: { kind: 'facility', facilityId: 'abs-1', name: 'Mainline Eastbound' },
       16: { kind: 'outside', row: 3, description: 'Aisle light' },
     });
     await fireEvent.click(row('Main 1'));
     expect(pin(/^#1 H1-G: Mainline Eastbound/)).toBeDisabled();
-
-    await fireEvent.click(pin(/^#16 H4-L: Outside Bowties/));
+    expect(pin(/^#16 H4-L: Outside Bowties/)).toBeEnabled();
     expect(screen.getByText('Outside Bowties · “Aisle light”')).toBeInTheDocument();
+  });
+
+  it('opens the shared release card for an outside pin, and confirming releases it and seats the lamp', async () => {
+    await openOnWiring({ 16: { kind: 'outside', row: 3, description: 'Aisle light' } });
+    await fireEvent.click(row('Main 1'));
+    await fireEvent.click(pin(/^#16 H4-L: Outside Bowties/));
+    expect(screen.queryByText(/cannot be used here/)).not.toBeInTheDocument();
+    const card = screen.getByRole('region', { name: 'Direct lamp 3, not managed by Bowties' });
+    expect(card).toHaveTextContent('Description: "Aisle light"');
     expect(within(row('Main 1')).getByText('needs a lamp')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent(/outside Bowties and cannot be used here/);
+
+    panelWiringFactsMock.mockResolvedValue(wiringFacts({}));
+    await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+    expect(card).toHaveTextContent('Release Direct lamp 3? Its pin (#16 H4-L) becomes free, and Direct lamp 3 is reset when you save.');
+    await fireEvent.click(within(card).getByRole('button', { name: /^Release Direct lamp 3 and use #16 H4-L/ }));
+
+    await waitFor(() => expect(pin(/^#16 H4-L: This block/)).toBeInTheDocument());
+    expect(within(row('Main 1')).getByText('Eagle Creek Fascia · #16 H4-L')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
+    expect(panelWiringFactsMock).toHaveBeenLastCalledWith(undefined, [{ nodeKey: BOARD_NODE, owner: 'Direct lamp 3' }]);
+  });
+
+  it('shows what the backend could not release as an error note', async () => {
+    await openOnWiring({ 16: { kind: 'outside', row: 3, description: 'Aisle light' } });
+    await fireEvent.click(row('Main 1'));
+    await fireEvent.click(pin(/^#16 H4-L: Outside Bowties/));
+    panelWiringFactsMock.mockResolvedValue({ ...wiringFacts({}), releaseIssues: [{ nodeKey: BOARD_NODE, detail: 'Board has no row 3' }] });
+    await fireEvent.click(screen.getByRole('button', { name: 'Release and use…' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Release Direct lamp 3 and use/ }));
+    expect(await screen.findByText('Board has no row 3')).toBeInTheDocument();
   });
 
   it('keeps Lit-when controls disabled with Occupied selected, and Done calls finish', async () => {

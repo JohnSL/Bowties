@@ -28,14 +28,13 @@ import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf, parseEditKey } from '$lib/utils/editKey';
 import {
   composeBlockSignals,
-  composeBlockSignalsRemoval,
   type BlockSignalsPreviewRequest,
   type ComposeIssue,
   type ReleasedOwner,
   type RemovalEdit,
   type SignalWiring,
 } from '$lib/api/signaling';
-import type { BlockSignalsRecord, Facility, NodeLogicPlacement, PanelRecord } from '$lib/api/facilities';
+import { composeFacilityRemoval, type BlockSignalsRecord, type Facility, type FacilityRemovalClaim, type FacilityRemovalResponse, type NodeLogicPlacement, type PanelRecord } from '$lib/api/facilities';
 import { composePanel, type ComposePanelIssue } from '$lib/api/panels';
 import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
@@ -365,33 +364,6 @@ export async function tearDownFacilityBowties(facilityId: string): Promise<void>
   }
 }
 
-/**
- * Delete the facility, first tearing down its composed bowties and
- * removing any user-owned channels that were bound to its slots.
- * Hardware-owned channels are left alone — their lifecycle follows
- * hardware config, not facility membership.
- *
- * Ordering matters: channel removal MUST happen AFTER facility deletion
- * so the cascade orchestrator (which watches `channelsStore.channels`)
- * cannot find slot bindings referencing the disappearing channel and
- * interfere with our teardown/delete sequence.
- */
-export async function deleteFacility(facilityId: string): Promise<void> {
-  // An Automatic Block Signals facility owns claimed board slots; deleting it
-  // generically would strand them. Route through the release workflow (Spec
-  // 020 / E2b) and surface a refusal as a typed error.
-  const target = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-  if (target?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && target.blockSignals) {
-    const result = await removeBlockSignalsFacility({ facilityId });
-    if (!result.ok) throw new BlockSignalsRemovalError(result);
-    return;
-  }
-
-  const userOwnedChannelIds = userOwnedChannelIdsOf(facilityId);
-  await tearDownFacilityBowties(facilityId);
-  deleteFacilityAndChannels(facilityId, userOwnedChannelIds);
-}
-
 /** User-owned channel IDs bound to the facility's slots (snapshot before delete). */
 function userOwnedChannelIdsOf(facilityId: string): string[] {
   const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
@@ -404,7 +376,13 @@ function userOwnedChannelIdsOf(facilityId: string): string[] {
   return ids;
 }
 
-/** Facility first, then channels, so the cascade orchestrator finds no slot bindings. */
+/**
+ * Delete the facility, then its user-owned channels. Hardware-owned channels
+ * are left alone: their lifecycle follows hardware config, not facility
+ * membership. Facility first, then channels, so the cascade orchestrator
+ * (which watches `channelsStore.channels`) finds no slot bindings referencing
+ * the disappearing channel.
+ */
 function deleteFacilityAndChannels(facilityId: string, userOwnedChannelIds: string[]): void {
   facilitiesStore.deleteFacility(facilityId);
   for (const channelId of userOwnedChannelIds) {
@@ -549,53 +527,102 @@ async function stageBlockSignalsFacility(
   });
 }
 
-// ── Automatic Block Signals removal (Spec 020 / E2b) ─────────────────────
+// ── Facility removal (Spec 020 / E2b, Spec 021 S4) ───────────────────────
 
-export interface RemoveBlockSignalsFacilityArgs {
+export interface RemoveFacilityArgs {
   facilityId: string;
-  /** Skip releasing the board's mast and Logic: delete the facility and channels only. */
+  /** Skip releasing the board's claimed slots: delete the facility and channels only. */
   leaveBoard?: boolean;
+  /** The claims the user confirmed in the preview; a different plan now is refused. */
+  previewedClaims?: readonly FacilityRemovalClaim[];
 }
 
-export type RemoveBlockSignalsFacilityResult = CreateBlockSignalsFacilityResult;
+export type RemoveFacilityResult =
+  | { ok: true }
+  | { ok: false; issues: ComposeIssue[] }
+  | { ok: false; error: unknown }
+  | { ok: false; planChanged: true };
 
-/** Thrown by the generic `deleteFacility` when an ABS release is refused or fails. */
-export class BlockSignalsRemovalError extends Error {
+export type FacilityRemovalPreview =
+  | { ok: true; claims: FacilityRemovalClaim[]; issues: ComposeIssue[] }
+  | { ok: false; error: unknown };
+
+/** Thrown when a removal is refused or fails and the caller wants an exception. */
+export class FacilityRemovalError extends Error {
   readonly issues?: ComposeIssue[];
   readonly cause?: unknown;
-  constructor(result: { ok: false; issues: ComposeIssue[] } | { ok: false; error: unknown } | { ok: false }) {
-    super('Could not remove the Automatic Block Signals facility');
-    this.name = 'BlockSignalsRemovalError';
+  constructor(result: Exclude<RemoveFacilityResult, { ok: true }>) {
+    super('Could not remove the facility');
+    this.name = 'FacilityRemovalError';
     if ('issues' in result) this.issues = result.issues;
     if ('error' in result) this.cause = result.error;
   }
 }
 
+class RemovalPlanChangedError extends Error {}
+
+function claimKey(claim: FacilityRemovalClaim): string {
+  return `${claim.nodeKey}|${claim.kind}|${claim.index}`;
+}
+
+function sameClaims(a: readonly FacilityRemovalClaim[], b: readonly FacilityRemovalClaim[]): boolean {
+  const keys = new Set(a.map(claimKey));
+  return keys.size === new Set(b.map(claimKey)).size && b.every((c) => keys.has(claimKey(c)));
+}
+
 /**
- * Workflow owner: remove an Automatic Block Signals facility, releasing its
- * mast and Logic as ordinary configuration drafts (unless
- * `leaveBoard`) and deleting the facility and its user-owned signal channels.
+ * Read-only: what removing the facility would release. Mirrors drafts so the
+ * backend sees unsaved edits, then composes; stages nothing.
+ */
+export async function previewFacilityRemoval(facilityId: string): Promise<FacilityRemovalPreview> {
+  try {
+    await syncDraftsForComposition();
+    const { claims, issues } = await composeFacilityRemoval(facilityId);
+    return { ok: true, claims, issues };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Workflow owner: remove a facility, the only kind router. A facility that
+ * claims board slots (Panel or Automatic Block Signals) releases them as
+ * ordinary configuration drafts (unless `leaveBoard`), refuses on any issue or
+ * when the plan differs from the previewed claims, and deletes the facility
+ * and its user-owned channels. Any other facility keeps the generic path: tear
+ * down its composed bowties, then delete it and its user-owned channels.
  *
  * Ordering is the rollback strategy: the only step that can throw
  * (`stageComposedEdits`) runs first, so a failure restores the prior drafts and
  * the facility/channels were never touched. The deletes that follow are
- * non-throwing store transitions. Refuses on any release issue with nothing
- * staged. Never tears down bowties (the template has no mapping).
+ * non-throwing store transitions.
  */
-export async function removeBlockSignalsFacility(
-  args: RemoveBlockSignalsFacilityArgs,
-): Promise<RemoveBlockSignalsFacilityResult> {
-  const { facilityId, leaveBoard = false } = args;
+export async function removeFacility(args: RemoveFacilityArgs): Promise<RemoveFacilityResult> {
+  const { facilityId, leaveBoard = false, previewedClaims } = args;
   const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-  if (!facility?.blockSignals) {
-    return { ok: false, error: new UnknownReferenceError('facility') };
+  if (!facility) return { ok: false, error: new UnknownReferenceError('facility') };
+
+  if (!facility.panel && !facility.blockSignals) {
+    try {
+      const userOwnedChannelIds = userOwnedChannelIdsOf(facilityId);
+      await tearDownFacilityBowties(facilityId);
+      deleteFacilityAndChannels(facilityId, userOwnedChannelIds);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error };
+    }
   }
 
-  return runStagingTransaction({
+  const result = await runStagingTransaction<ComposeIssue, FacilityRemovalResponse>({
     sync: !leaveBoard,
-    compose: async () => (leaveBoard
-      ? { issues: [] as ComposeIssue[], edits: [] as readonly RemovalEdit[], logicPlacement: [] as NodeLogicPlacement[] }
-      : composeBlockSignalsRemoval(facilityId)),
+    compose: async () => {
+      if (leaveBoard) {
+        return { issues: [], edits: [], logicPlacement: [], claims: [] };
+      }
+      const composed = await composeFacilityRemoval(facilityId);
+      if (previewedClaims && !sameClaims(previewedClaims, composed.claims)) throw new RemovalPlanChangedError();
+      return composed;
+    },
     stage: (tx, composed) => tx.configEdits(composed.edits, facilityId),
     // After the delete, which already drops the facility's own groups: only a board
     // whose remaining groups differ from that (another facility's group moved) stages a delta.
@@ -604,6 +631,10 @@ export async function removeBlockSignalsFacility(
       stageLogicPlacement(composed.logicPlacement);
     },
   });
+  if (!result.ok && 'error' in result && result.error instanceof RemovalPlanChangedError) {
+    return { ok: false, planChanged: true };
+  }
+  return result;
 }
 
 // ── Panel creation (Spec 021) ────────────────────────────────────────────
@@ -619,6 +650,8 @@ export interface CreatePanelFacilityArgs {
   record: PanelRecord;
   /** One per entry that has a lamp. */
   lamps: { entryId: string; nodeKey: string; output: number; name: string }[];
+  /** Untracked owners the user chose to release so their pins can be used. */
+  release?: ReleasedOwner[];
 }
 
 export type CreatePanelFacilityResult =
@@ -636,12 +669,12 @@ export type CreatePanelFacilityResult =
 export async function createPanelFacility(
   args: CreatePanelFacilityArgs,
 ): Promise<CreatePanelFacilityResult> {
-  const { facilityId, name, record, lamps } = args;
+  const { facilityId, name, record, lamps, release } = args;
   const template = behaviorTemplatesStore.findByTemplateId(PANEL_TEMPLATE_ID);
   if (!template) return { ok: false, error: new UnknownReferenceError('template') };
 
   return runStagingTransaction({
-    compose: () => composePanel({ facilityId, record, lamps }),
+    compose: () => composePanel({ facilityId, record, lamps, ...(release?.length ? { release } : {}) }),
     stage: (tx, composed) => {
       const lampNames = new Map(lamps.map((l) => [l.entryId, l.name]));
       const channelIdByEntry = new Map<string, string>();
@@ -667,6 +700,84 @@ export async function createPanelFacility(
         tx.attachChannel(facilityId, PANEL_LAMPS_SLOT, channelId);
       }
       tx.configEdits(composed.edits, facilityId);
+    },
+  });
+}
+
+export type UpdatePanelFacilityArgs = CreatePanelFacilityArgs;
+export type UpdatePanelFacilityResult = CreatePanelFacilityResult;
+
+/**
+ * Workflow owner: update a saved Panel facility. Same pipeline as create; the
+ * facility keeps its ID and the lamp channels of lamps that stay (renamed, and
+ * rebound only when the board or row changed), new lamps get channels, and in
+ * the commit phase lamps the edit dropped lose their channel. The record, the
+ * attaches and the detaches all land in this one synchronous pass, so the
+ * record's lamp channel IDs equal the `lamps` slot set when the batch ends.
+ * Dropped-row resets come back from the compose as part of the edits.
+ */
+export async function updatePanelFacility(
+  args: UpdatePanelFacilityArgs,
+): Promise<UpdatePanelFacilityResult> {
+  const { facilityId, name, record, lamps, release } = args;
+  const priorFacility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (!priorFacility?.panel) return { ok: false, error: new UnknownReferenceError('facility') };
+  const savedLampByEntry = new Map(
+    priorFacility.panel.entries.flatMap((e) => (e.lampChannelId ? [[e.entryId, e.lampChannelId] as const] : [])),
+  );
+
+  return runStagingTransaction({
+    compose: () => composePanel({ facilityId, record, lamps, ...(release?.length ? { release } : {}) }),
+    stage: (tx, composed) => {
+      const lampNames = new Map(lamps.map((l) => [l.entryId, l.name]));
+      const channelIdByEntry = new Map<string, string>();
+      const createdChannelIds: string[] = [];
+      for (const assignment of composed.assignments) {
+        const lampName = lampNames.get(assignment.entryId) ?? '';
+        const binding = { kind: 'lampRow' as const, nodeKey: assignment.nodeKey, rowOrdinal: assignment.row };
+        const savedChannelId = savedLampByEntry.get(assignment.entryId);
+        const saved = savedChannelId ? channelsStore.channels.find((c) => c.id === savedChannelId) : undefined;
+        if (savedChannelId && saved) {
+          if (saved.name !== lampName) tx.renameChannel(savedChannelId, lampName);
+          const bound = saved.binding;
+          if (bound.kind !== 'lampRow' || bound.nodeKey !== binding.nodeKey || bound.rowOrdinal !== binding.rowOrdinal) {
+            tx.rebindChannel(savedChannelId, binding);
+          }
+          channelIdByEntry.set(assignment.entryId, savedChannelId);
+        } else {
+          const channel = tx.createUserOwnedChannel({
+            role: 'lamp-indicator',
+            style: 'single-led-direct-lamp',
+            binding,
+            name: lampName,
+          });
+          createdChannelIds.push(channel.id);
+          channelIdByEntry.set(assignment.entryId, channel.id);
+        }
+      }
+
+      tx.setPanelRecord(facilityId, {
+        ...record,
+        entries: record.entries.map((entry) => {
+          const lampChannelId = channelIdByEntry.get(entry.entryId);
+          return lampChannelId ? { ...entry, lampChannelId } : entry;
+        }),
+      });
+      if (priorFacility.name !== name) tx.renameFacility(facilityId, name);
+      for (const channelId of createdChannelIds) {
+        tx.attachChannel(facilityId, PANEL_LAMPS_SLOT, channelId);
+      }
+      tx.configEdits(composed.edits, facilityId);
+    },
+    // Lamps the edit dropped lose their channel, after the last throwing step;
+    // Discard restores both through the draft layer (ADR-0012).
+    commit: (composed) => {
+      const keptEntryIds = new Set(composed.assignments.map((a) => a.entryId));
+      for (const [entryId, channelId] of savedLampByEntry) {
+        if (keptEntryIds.has(entryId)) continue;
+        facilitiesStore.detachChannel(facilityId, PANEL_LAMPS_SLOT, channelId);
+        channelsStore.removeUserOwnedChannel(channelId);
+      }
     },
   });
 }

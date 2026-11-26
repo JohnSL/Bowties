@@ -9,6 +9,7 @@
   import type { PanelEditorActions } from '$lib/orchestration/panelEditorOrchestrator';
   import type { PanelWiringPin } from '$lib/api/panels';
   import SignalLccPicker from '$lib/components/SignalLcc/SignalLccPicker.svelte';
+  import OutsideOwnerRelease from '$lib/components/SignalLcc/OutsideOwnerRelease.svelte';
   import PinGrid, { type PinGridPinView, type PinGridState } from '$lib/components/SignalLcc/PinGrid.svelte';
 
   let { view, actions }: { view: PanelEditorView; actions: PanelEditorActions } = $props();
@@ -44,6 +45,9 @@
       default: return { state: 'free', who: 'Free' };
     }
   }
+
+  const pending = $derived(view.pendingRelease);
+  const pendingPinLabel = $derived(pending ? pinLabel(pending.nodeKey, pending.output) : '');
 
   function pinView(output: number): PinGridPinView {
     const pin = board?.pins.find((candidate) => candidate.output === output);
@@ -134,6 +138,18 @@
             ariaLabel={`Pins on ${board?.name ?? 'board'}`}
           />
         </div>
+        {#if pending}
+          <OutsideOwnerRelease
+            owner={pending.owner.owner}
+            description={pending.description}
+            pinLabels={[pendingPinLabel]}
+            releaseLabel={`Release ${pending.owner.owner} and use ${pendingPinLabel}`}
+            onRelease={() => void actions.confirmRelease()}
+          />
+        {/if}
+        {#each view.releaseIssues as issue (issue.detail)}
+          <div class="note error" role="alert">{issue.detail}</div>
+        {/each}
         {#if view.message}
           <div class={`note ${view.message.kind}`} role="status">{view.message.text}</div>
         {/if}
