@@ -124,10 +124,10 @@
     border: 1px solid var(--border-strong); border-radius: 7px; background: #fff;
     box-shadow: 0 12px 34px rgba(0,0,0,.12);
   }
-  .dialog.wide { width: min(1080px, 100%); }
+  .dialog.wide { width: min(1120px, 100%); }
   .dialog-head {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 600;
+    padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 600;
   }
   .dialog-body { padding: 16px; }
   .dialog-foot {
@@ -141,21 +141,17 @@
   }
 
   /* Stepper */
-  .stepper { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-subtle); }
-  .step {
-    display: flex; align-items: center; gap: 8px; padding: 10px 18px;
-    border-bottom: 2px solid transparent; color: var(--text-muted); cursor: pointer;
-  }
-  .step.current { color: var(--text); border-bottom-color: var(--brand); font-weight: 600; }
-  .step-num {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong);
-    font-size: 11px; background: #fff;
-  }
-  .step.current .step-num { border-color: var(--brand); background: var(--brand); color: #fff; }
-  .step-state { font-size: 11px; font-weight: 400; }
-  .step-state.ok { color: var(--success); }
-  .step-state.attn { color: var(--warning); }
+  .stepper { display: flex; margin: 0 0 18px; padding: 0; list-style: none; }
+  .step { flex: 1; border: 1px solid var(--border); border-right: 0; background: var(--bg-subtle); font-size: 11px; }
+  .step:first-child { border-radius: 5px 0 0 5px; }
+  .step:last-child { border-right: 1px solid var(--border); border-radius: 0 5px 5px 0; }
+  .step.done { color: #166534; background: #eefaf4; }
+  .step.current { border-color: var(--brand); background: var(--bg-selected); font-weight: 650; }
+  .step a { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-radius: inherit; color: inherit; text-decoration: none; }
+  .step a:hover { background: #e8f1fb; }
+  .step-num { margin-right: 5px; font-size: 10px; font-weight: 700; }
+  .step-mark { margin-left: auto; color: #166534; font-weight: 700; }
+  .step-mark.warn { width: 14px; height: 14px; border-radius: 50%; background: #f7b955; color: #3d2a00; font-size: 10px; text-align: center; }
 
   /* Add facility choices */
   .choice-list { display: grid; gap: 8px; margin-bottom: 16px; }
@@ -208,8 +204,8 @@
   .connector-label { margin-bottom: 4px; color: var(--text-muted); font-size: 11px; }
   .pin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
   .pin {
-    padding: 5px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: left;
-    font-size: 11px; background: #fff; cursor: pointer; min-height: 42px;
+    padding: 5px 4px; border: 1px solid var(--border); border-radius: 4px; text-align: center;
+    font-size: 11px; background: #fff; cursor: pointer;
   }
   .pin .pin-id { display: block; font-family: Consolas, monospace; font-weight: 600; }
   .pin .pin-owner { display: block; color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -237,7 +233,7 @@
   .lamp.none { background: transparent; border: 1px dashed var(--border-strong); }
 
   /* Railroad card */
-  .facility-card { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .facility-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
   .facility-card + .facility-card { margin-top: 10px; }
   .facility-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   .facility-card-title { font-weight: 600; }
@@ -390,9 +386,9 @@
     </div>
     <div class="stage stack">
       <div class="dialog wide">
-        <div class="dialog-head"><span>Eagle Creek fascia</span><span>×</span></div>
-        <div class="stepper" data-stepper></div>
+        <div class="dialog-head">Eagle Creek fascia · Blocks</div>
         <div class="dialog-body">
+          <ol class="stepper" data-stepper="blocks" aria-label="Panel editor steps"></ol>
           <div class="panes">
             <div class="pane">
               <div class="pane-head"><span>On this panel</span><span class="chip" id="b-count">0 blocks</span></div>
@@ -419,8 +415,8 @@
           </div>
         </div>
         <div class="dialog-foot">
+          <button class="btn" data-panel-cancel>Cancel</button>
           <span class="foot-status" id="b-foot"></span>
-          <button class="btn">Cancel</button>
           <button class="btn btn-primary" id="b-next">Next: Wiring</button>
         </div>
       </div>
@@ -448,9 +444,9 @@
     </div>
     <div class="stage stack">
       <div class="dialog wide">
-        <div class="dialog-head"><span>Eagle Creek fascia</span><span>×</span></div>
-        <div class="stepper" data-stepper></div>
+        <div class="dialog-head">Eagle Creek fascia · Wiring</div>
         <div class="dialog-body">
+          <ol class="stepper" data-stepper="wiring" aria-label="Panel editor steps"></ol>
           <div class="toolbar" style="margin-bottom:10px">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span class="field-label" style="margin:0">Lamps are lit when the block is</span>
@@ -470,6 +466,7 @@
           </div>
         </div>
         <div class="dialog-foot">
+          <button class="btn" data-panel-cancel>Cancel</button>
           <span class="foot-status" id="w-foot"></span>
           <button class="btn" id="w-back">Back</button>
           <button class="btn btn-primary" id="w-done">Done</button>
@@ -759,7 +756,6 @@
 
   // ---------- Shared editor state ----------
   const state = {
-    step: "blocks",
     panel: [],          // ordered block names
     wiring: {},         // block -> { board, pin }
     override: {},       // block -> "occupied" | "clear"
@@ -770,6 +766,7 @@
     search: "",
     message: null,
   };
+  let accepted = structuredClone(state);
 
   function pinOwner(board, n) {
     for (const [blk, w] of Object.entries(state.wiring)) {
@@ -783,16 +780,16 @@
 
   // ---------- Stepper ----------
   function renderSteppers() {
-    document.querySelectorAll("[data-stepper]").forEach((el, idx) => {
-      const here = idx === 0 ? "blocks" : "wiring";
-      const n = state.panel.length;
-      const blocksState = n ? `<span class="step-state ok">${n} block${n > 1 ? "s" : ""}</span>` : `<span class="step-state">no blocks yet</span>`;
-      const need = needsLamp();
-      const wiringState = !n ? `<span class="step-state">—</span>` : need ? `<span class="step-state attn">${need} need${need > 1 ? "" : "s"} a lamp</span>` : `<span class="step-state ok">all wired</span>`;
-      el.innerHTML =
-        `<div class="step ${here === "blocks" ? "current" : ""}" data-go="blocks"><span class="step-num">1</span>Blocks ${blocksState}</div>` +
-        `<div class="step ${here === "wiring" ? "current" : ""}" data-go="wiring"><span class="step-num">2</span>Wiring ${wiringState}</div>`;
-      el.querySelectorAll("[data-go]").forEach((s) => s.addEventListener("click", () => { location.hash = s.dataset.go; }));
+    document.querySelectorAll("[data-stepper]").forEach((el) => {
+      el.innerHTML = ["Blocks", "Wiring"].map((label, i) => {
+        const key = label.toLowerCase();
+        const current = key === el.dataset.stepper;
+        const complete = state.panel.length > 0 && (key === "blocks" || needsLamp() === 0);
+        const reached = current || key === "blocks" || wiredCount() > 0;
+        const status = !reached ? "" : complete ? "complete" : "needs attention";
+        const mark = !status ? "" : `<span aria-hidden="true" class="step-mark ${complete ? "" : "warn"}">${complete ? "✓" : "!"}</span>`;
+        return `<li class="step ${current ? "current" : complete ? "done" : ""}"><a href="#${key}" ${current ? 'aria-current="step"' : ""} aria-label="${i + 1} ${label}${status ? ", " + status : ""}"><span class="step-num">${i + 1}</span>${label}${mark}</a></li>`;
+      }).join("");
     });
   }
 
@@ -1080,7 +1077,16 @@
   }
 
   document.getElementById("w-back").addEventListener("click", () => { location.hash = "blocks"; });
-  document.getElementById("w-done").addEventListener("click", () => { location.hash = "railroad"; });
+  document.getElementById("w-done").addEventListener("click", () => {
+    accepted = structuredClone(state);
+    location.hash = "railroad";
+  });
+  document.querySelectorAll("[data-panel-cancel]").forEach(button => button.addEventListener("click", () => {
+    Object.assign(state, structuredClone(accepted));
+    document.getElementById("b-search").value = state.search;
+    renderAll();
+    location.hash = "railroad";
+  }));
 
   // ---------- Railroad card ----------
   function renderRailroad() {

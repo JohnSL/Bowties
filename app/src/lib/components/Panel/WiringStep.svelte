@@ -23,7 +23,7 @@
   const PIN_LEGEND: Array<{ state: PinGridState; text: string }> = [
     { state: 'free', text: 'Free' },
     { state: 'selected', text: 'This block' },
-    { state: 'sibling', text: 'Another block on this panel' },
+    { state: 'sibling', text: 'Used by another block on this panel' },
     { state: 'outside', text: 'Used outside Bowties' },
     { state: 'facility', text: 'Used by Bowties elsewhere' },
   ];
@@ -49,7 +49,11 @@
     const pin = board?.pins.find((candidate) => candidate.output === output);
     if (!pin) return { state: 'free', who: '', ariaLabel: `#${output}`, disabled: true };
     const info = describe(pin);
-    return { ...info, ariaLabel: `${pin.label}: ${info.who}`, disabled: info.state === 'facility' };
+    return {
+      ...info,
+      ariaLabel: `${pin.label}: ${info.state === 'sibling' ? `Used by ${info.who}` : info.who}`,
+      disabled: info.state === 'facility' || info.state === 'sibling',
+    };
   }
 </script>
 

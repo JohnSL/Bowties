@@ -36,6 +36,19 @@ describe('panelEditorStore blocks step', () => {
     expect(store.lampFor(a.entryId)).toBeNull();
   });
 
+  it('seatLamp refuses a pin another entry holds, and the owner can still clear it', () => {
+    store.start('P');
+    store.addBlock(A);
+    store.addBlock(B);
+    const [a, b] = store.entries;
+    store.seatLamp(a.entryId, 'node1', 3);
+    store.seatLamp(b.entryId, 'node1', 3);
+    expect(store.lampFor(b.entryId)).toBeNull();
+    expect(store.lampFor(a.entryId)).toEqual({ nodeKey: 'node1', output: 3 });
+    store.seatLamp(a.entryId, 'node1', 3);
+    expect(store.lampFor(a.entryId)).toBeNull();
+  });
+
   it('step bar reports block count and wiring need', () => {
     store.start('P');
     expect(store.stepBar).toEqual({ blocksCount: 0, wiring: 'none' });

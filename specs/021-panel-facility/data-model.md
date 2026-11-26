@@ -80,7 +80,7 @@ Pin click on the selected entry:
 |---|---|
 | free | seat |
 | this entry | clear (FR-016) |
-| another entry on this panel | move; that entry needs a lamp; warn |
+| another entry on this panel | not choosable; shows that block; clear it there first (user decision 2026-11-26, same rule as ABS signals) |
 | Bowties elsewhere | not choosable |
 | outside Bowties | Release card; after release, seat and record the release |
 

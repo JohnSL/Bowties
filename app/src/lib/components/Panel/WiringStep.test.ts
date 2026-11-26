@@ -96,12 +96,12 @@ describe('Panel editor Wiring step', () => {
     expect(pin(/^#9 H3-G: Free/)).toBeInTheDocument();
   });
 
-  it("shows another block's pin by that block's name", async () => {
+  it("shows another block's pin as used by that block and not choosable", async () => {
     await openOnWiring();
     await fireEvent.click(row('Main 1'));
     await fireEvent.click(pin(/^#9 H3-G/));
     await fireEvent.click(row('Main 2'));
-    expect(pin(/^#9 H3-G: Main 1/)).toBeEnabled();
+    expect(pin(/^#9 H3-G: Used by Main 1/)).toBeDisabled();
   });
 
   it('disables pins used by another facility and shows outside pins without making them choosable', async () => {

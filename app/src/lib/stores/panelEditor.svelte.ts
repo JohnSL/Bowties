@@ -123,25 +123,21 @@ class PanelEditorStore {
 
   /**
    * Seat the entry's lamp on a pin: free places it, its own pin clears it, and
-   * a pin another entry holds moves to this entry. Returns the entry that lost
-   * its lamp, if any.
+   * a pin another entry holds is refused (that entry must clear it first).
    */
-  seatLamp(entryId: string, nodeKey: string, output: number): PanelEditorEntry | null {
+  seatLamp(entryId: string, nodeKey: string, output: number): void {
+    const holder = this.entryHolding(nodeKey, output);
+    if (holder && holder.entryId !== entryId) return;
     const assignments: Record<string, PanelLamp | null> = Object.fromEntries(
       this._entries.map((e) => [e.entryId, e.lamp ?? null]),
     );
-    const { assignments: next, displaced } = seatPin(assignments, entryId, { nodeKey, output }, {
-      taken: 'move',
-      samePin,
-    });
-    const lost = displaced ? this._entries.find((e) => e.entryId === displaced) ?? null : null;
+    const { assignments: next } = seatPin(assignments, entryId, { nodeKey, output }, { samePin });
     this._entries = this._entries.map((e) => {
       const { lamp: _, ...rest } = e;
       const lamp = next[e.entryId];
       return lamp ? { ...rest, lamp } : rest;
     });
     this._finishError = null;
-    return lost;
   }
 
   reset(): void { this.clear(); }

@@ -59,13 +59,8 @@ class PanelEditorOrchestrator {
     }
     if (owner.kind === 'facility' || (owner.kind === 'panel' && !ownPanel)) return;
 
-    const lost = store.seatLamp(entry.entryId, nodeKey, output);
-    store.setMessage(lost
-      ? {
-          kind: 'warn',
-          text: `Moved ${pin.label} from ${lost.blockName} to ${entry.blockName}. ${lost.blockName} now needs a lamp.`,
-        }
-      : undefined);
+    store.seatLamp(entry.entryId, nodeKey, output);
+    store.setMessage(undefined);
   }
 
   /** Create the panel from the editor's input; the editor closes only on success. */

@@ -175,3 +175,6 @@
 * Bowtie catalog reads configuration through the effective view
   * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of Pending Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Pending Changes resolve the same way for every backend reader.
   * The `modified_value` layer is gone (Spec 020 E3b-1) and `LayoutState` is the single owner of Pending Changes (E3b-0); this overlay is the last parallel reader. It already uses the shared still-waiting predicate.
+* Railroad editor walk-through tests time out under full-suite load
+  * In full `npx vitest run`, `RailroadPanel.panel.integration.test.ts` "creates a Wired panel with three lamp channels…" and `RailroadPanel.integration.test.ts` "shows the rules of a joined block with a turnout on Aspects" exceed the 5 s default timeout (≈5.0–5.5 s); both pass alone in under 2 s. Seen 2026-11-26 after the shared `SignalLcc/PinGrid` landed.
+  * Approach: follow the aiwiki/owners.md guidance — seed saved state (`railroadPanelTestSupport.seedSavedBlockSignals`-style) instead of walking every editor step, or split the walks; raise a per-test timeout only as a stopgap.

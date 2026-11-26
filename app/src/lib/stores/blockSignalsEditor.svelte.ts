@@ -338,7 +338,6 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
       { red: choice.redOutput, green: choice.greenOutput },
       lamp,
       output,
-      { taken: 'swap' },
     );
     this._wiring = {
       ...this._wiring,

@@ -100,7 +100,7 @@ A modeler opens a layout that has Block Indicator facilities. Bowties converts t
 
 - **Pin in use by Bowties.** A pin that a signal mast, another panel or another facility uses cannot be chosen, and the grid names its owner.
 - **Pin in use outside Bowties.** A pin with Direct Lamp Control configuration that Bowties did not create is shown as used outside Bowties with its Lamp Description, and can be chosen only after the modeler releases it, as in the signals Wiring step.
-- **Pin taken from another block on the same panel.** Choosing a pin another block on this panel already uses moves it to the selected block. The other block then needs a lamp, and the editor says so.
+- **Pin taken from another block on the same panel.** A pin another block on this panel already uses shows that block and cannot be chosen; the modeler clears it on that block first (the same rule as signals in an Automatic Block Signals edit; decided 2026-11-26).
 - **Block lost.** If a block's detector disappears (its detector board is cleared or changed), the panel keeps the block's entry and lamp pin, marks it as no longer detected, and counts the panel as Incomplete. Nothing is reset on the board. The modeler removes the entry, or points it at another block, which keeps the lamp pin. If the same block is detected again, the entry recovers without changes.
 - **Same block on two panels.** Allowed. Each panel owns its own lamp for that block.
 - **Panel with no blocks.** Next and Done are available. A saved panel with no blocks is shown as Empty on the Railroad tab.

@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 0/6 slices complete
+Status: 1/6 slices complete
 
 ## Architecture
 
@@ -88,7 +88,7 @@ flowchart LR
 
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
-| S1 | One-board panel, end to end | HITL | None | tasked |
+| S1 | One-board panel, end to end | HITL | None | done |
 | S2 | Panel card and channel usage | AFK | S1 | sketched |
 | S3 | Blocks step and "lit when" | AFK | S1 | sketched |
 | S4 | Edit, release and remove | HITL | S1 | sketched |
@@ -100,7 +100,7 @@ flowchart LR
 **Intent**: Name a Panel, add blocks one at a time, wire each to any pin, then Done and Save. The lamps follow their blocks.
 **Boundary**: Components → panel editor store/orchestrator → facilityOrchestrator → facilities, channels and config drafts → API → backend commands → core panel compiler and signaling outputs → Save → Signal LCC
 **Blocked by**: None
-**Status**: tasked
+**Status**: done
 
 **Acceptance criteria**:
 - [ ] Add facility offers Panel. Naming one opens the Blocks step, empty, with guidance.
@@ -133,7 +133,7 @@ flowchart LR
 - [x] S1-T8: `panelEditor` store and `panelEditorOrchestrator`: steps and step-bar counts, add a block (no duplicates), select an entry, wiring facts per board shown, pin click through the shared rule, Done → `createPanelFacility`, Cancel. Register in the lifecycle reset. Store and orchestrator tests.
 - [x] S1-T9: Components (imports through `$lib/layout` only). `AddFacilityDialog` offers Panel. `components/Panel/PanelEditor`, `BlocksStep` (searchable list grouped by detector board, "on panel" chip), `WiringStep` (block list with status, board select, pin grid by head with legend and owners) and a minimal `PanelCard` in `FacilitiesSection`. Component tests.
 - [x] S1-T10: Docs. Glossary: the Panel term, plus the F7 fixes for Claimed Resource (derived; panels claim Direct Lamp rows) and the "at most one facility slot" rule. data-model.md and contracts/tauri-ipc.md updated for D1 (pins keyed by `output`, row assignments). ADR extensions: 0012 (Direct Lamp claims; staging transaction spans facility kinds), 0013 (lamp identity = row, pin = effective Lamp Selection), 0005 (manifest 6). aiwiki owners, flows and seams.
-- [ ] S1-T11: Validate. `cargo test -p bowties-core`; app crate tests (`cargo test -p app`, or `cargo check --tests` where only that is supported); `npm test`; `npm run check`; `cargo clippy -p bowties-core -p app -- -D warnings`. Check the changed-file set against the expected surface. Compare the running app against the mockup's `#add`, `#blocks`, `#wiring` and `#railroad` with the allowed differences above, and record the results here. Bench: #9, #3, #14 on a Signal LCC.
+- [x] S1-T11: Validate. `cargo test -p bowties-core`; app crate tests (`cargo test -p app`, or `cargo check --tests` where only that is supported); `npm test`; `npm run check`; `cargo clippy -p bowties-core -p app -- -D warnings`. Check the changed-file set against the expected surface. Compare the running app against the mockup's `#add`, `#blocks`, `#wiring` and `#railroad` with the allowed differences above, and record the results here. Bench: #9, #3, #14 on a Signal LCC.
 
 **S1 validation record (2026-11-25)**:
 - Automated: `bowties-core` `cargo test` 562 lib + all integration suites green (incl. `panel_compiler.rs` 12, `panel_layout_roundtrip.rs` 3). App crate `cargo test --lib` 135 passed, 2 failed in untouched files (`events/router.rs` node ID format, `profile/loader.rs` BOD4 rules); not caused by this slice, not yet re-run on a clean checkout. Frontend `vitest run` 147 files / 1834 tests green. svelte-check 113 errors / 2 warnings, identical to committed HEAD. `cargo clippy -D warnings` fails on pre-existing lints only; none in new panel code.
@@ -143,6 +143,8 @@ flowchart LR
 - 2026-11-26 user check: one block wired and lit on the bench (works). Running-app review found three follow-ups, fixed before S1 closes: (1) Wiring's board picker is a plain node-type/address combo; reuse the ABS node selector (richer label plus search dialog). (2) Each step shows a message in the footer row beside Cancel/Next; remove or move it. (3) Regression from Spec 020: the ABS wiring step shows only the selected signal's pins as taken; pins of other signals in the same edit show as free.
 - 2026-11-26 follow-ups done (user chose 1B, 2, 3): (1) ABS: a pin another signal in the edit holds shows that signal and lamp and is not choosable; `seatLamp` refuses it; the core compiler rejects two signals on one output (`SignalOutputHeldBySignal`). Panels keep "move" for another entry on the same panel (open question to the user). (2) Shared `SignalLcc/SignalLccPicker` replaces the Panel board `<select>` and the ABS inline picker. (3) Panel footer is buttons only; Done error and lamp note moved to the body. Validation: vitest 148 files / 1847 passed; svelte-check 113/2 (baseline); bowties-core cargo test green; app crate lib 135 passed, 2 pre-existing failures (router, profile loader). User confirmed in the running app (screenshots).
 - 2026-11-26 shared pin grid (user chose A): `SignalLcc/PinGrid` renders both Wiring steps' pins in the ABS look. Approved deviation from mockup `#wiring`: row headers H1–H4 on the left instead of "Head H1" headings; legend has swatches; "Free"/"This block" capitalized. Outside pins stay clickable in S1 so the click explains they cannot be used (Release is S4). Validation: vitest 1850/1852 in the full run, the 2 failures were 5 s timeouts in Railroad integration walks under suite load and pass alone (20/20); svelte-check 113/2.
+- 2026-11-26 panel pins: a pin another block on this panel holds is not choosable (user decision, same as ABS); pinSeat's `move` mode removed. Spec edge case and data-model pin-click table updated; mockups.html line 483 still says "moves", left to the user's mockup update.
+- 2026-11-26 S1 closed: bench check complete (user). Final visual review against the updated mockups is handled by the user separately. Known: in full vitest runs the Panel create walk and the ABS "joined block … on Aspects" walk exceed the 5 s timeout under suite load (pass alone); see backlog.
 - Known S1 limits carried to later slices: the panel card has no Edit or Remove (S4); deleting a panel any other way is not offered; boards appear in Wiring only when a Signal LCC profile matches (same as ABS).
 
 ### S2: Panel card and channel usage [AFK]
@@ -223,4 +225,4 @@ flowchart LR
 - [ ] A guard test fails if a route or component imports an edit-layer store directly.
 - [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
 
-<!-- Session: 2026-11-25 — S1 implemented and green (tasks T1–T10 checked); T11 caller gates pending: running-app mockup comparison and bench (#9, #3, #14). Next: finish S1 gates, then S2 (AFK) or S3 (AFK). -->
+<!-- Session: 2026-11-26 — S1 done. Next: S2 (AFK) or S3 (AFK). -->

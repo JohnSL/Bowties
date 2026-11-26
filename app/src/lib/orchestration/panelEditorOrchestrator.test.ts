@@ -69,18 +69,15 @@ describe('panelEditorOrchestrator wiring step', () => {
     expect(store.lampFor(a.entryId)).toBeNull();
   });
 
-  it('choosing a pin another entry holds moves it and says who needs a lamp', async () => {
+  it('a pin another entry holds is refused: nothing moves and there is no message', async () => {
     const { a, b } = await openOnWiring();
     actions.selectEntry(a.entryId);
     actions.pinClick(NODE, 9);
     actions.selectEntry(b.entryId);
     actions.pinClick(NODE, 9);
-    expect(store.lampFor(b.entryId)).toEqual({ nodeKey: NODE, output: 9 });
-    expect(store.lampFor(a.entryId)).toBeNull();
-    expect(store.message).toEqual({
-      kind: 'warn',
-      text: 'Moved #9 H3-G from Block A to Block B. Block A now needs a lamp.',
-    });
+    expect(store.lampFor(b.entryId)).toBeNull();
+    expect(store.lampFor(a.entryId)).toEqual({ nodeKey: NODE, output: 9 });
+    expect(store.message).toBeUndefined();
   });
 
   it('a pin owned by another facility or panel is not choosable', async () => {
