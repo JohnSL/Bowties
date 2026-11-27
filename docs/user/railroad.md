@@ -182,7 +182,7 @@ The card also shows the track diagram and available live occupancy. Occupancy re
 
 **Edit** opens the facility with its current choices. Change the appropriate pages, finish with Done, and Save.
 
-**Remove** previews what will be reset on each board. Confirm only after reviewing that list. Removal resets the settings owned by the facility while keeping the blocks and detectors; Save or Sync carries the configuration changes to the hardware.
+**Delete** on the signal facility card previews what will be reset on each board. Confirm only after reviewing that list. Removal resets the settings owned by the facility while keeping the blocks and detectors; Save or Sync carries the configuration changes to the hardware.
 
 Because facilities can share a board, review resource and logic changes when modifying or removing one.
 
