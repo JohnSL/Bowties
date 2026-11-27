@@ -35,6 +35,13 @@ Routes own:
 - wiring user actions to orchestrators and stores
 - cross-feature UI entry points
 
+The main view tabs are ordered **Config, Railroad, Bowties**. Config remains
+the initial selection; ArrowLeft/ArrowRight cycle through the displayed order
+with wraparound. Explicit cross-feature navigation still selects its target
+view. `app/src/routes/page.route.test.ts` protects the order, initial selection,
+and keyboard cycling. Tab order does not change configuration-read controls
+or layout restoration.
+
 Routes should not become the owner of:
 
 - multi-step discovery, config-read, offline, or sync workflows

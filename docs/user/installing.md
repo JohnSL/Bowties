@@ -35,6 +35,8 @@ Bowties is an open-source project that is not yet code-signed with a commercial 
 
 After clicking the download link, Edge shows a warning in the Downloads panel saying the file was blocked or "isn't commonly downloaded."
 
+The screenshots below use an older Bowties version as an example. Download the current release; the version in your filename will differ.
+
 ![Edge download warning](../images/download-warning.png)
 
 Click the **…** (three dots) menu next to the download entry and choose **Keep**.
@@ -147,10 +149,13 @@ Bowties connects to your LCC network in two ways:
 | Method | Hardware examples |
 |--------|------------------|
 | **TCP hub** | JMRI (port 12021), any GridConnect TCP bridge |
-| **USB-to-CAN (GridConnect serial)** | SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO |
+| **USB-to-CAN (GridConnect serial)** | SPROG CANISB, SPROG USB-LCC, SPROG PI-LCC, RR-CirKits LCC Buffer-USB, CAN2USBINO |
+| **USB-to-CAN (MERG GridConnect serial)** | MERG CAN-RS, CANUSB4 |
 | **USB-to-CAN (SLCAN)** | Canable, Lawicel CANUSB, any `slcand`-compatible adapter |
 
 No additional software or drivers are required for the TCP hub method. For USB adapters, the appropriate USB serial driver for your adapter must be installed (most modern adapters use a CH340 or FTDI chip with OS-provided drivers).
+
+Choose the named preset for your adapter in Bowties, particularly **MERG CAN-RS / CANUSB4** for MERG devices. See [connection setup](using.md#connecting-to-your-network) for the settings each preset needs.
 
 ## Uninstalling
 

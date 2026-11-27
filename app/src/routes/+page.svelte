@@ -139,7 +139,7 @@
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
 
-  const TAB_ORDER: Array<typeof activeTab> = ['config', 'bowties', 'railroad'];
+  const TAB_ORDER: Array<typeof activeTab> = ['config', 'railroad', 'bowties'];
 
   // Ref to SaveControls for imperative save calls from menu shortcuts
   let saveControlsRef = $state<SaveControls | null>(null);
@@ -1528,7 +1528,7 @@
   {#if layoutSession.isConnected || layoutSession.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
-        <!-- Tab strip: Config | Bowties | Railroad -->
+        <!-- Tab strip: Config | Railroad | Bowties -->
         <div
           class="tab-strip"
           role="tablist"
@@ -1545,15 +1545,6 @@
           >Config</button>
           <button
             class="tab-item"
-            class:tab-active={activeTab === 'bowties'}
-            role="tab"
-            aria-selected={activeTab === 'bowties'}
-            onclick={() => activeTab = 'bowties'}
-            onkeydown={handleModeKeydown}
-            title="Bowtie connections view"
-          >Bowties</button>
-          <button
-            class="tab-item"
             class:tab-active={activeTab === 'railroad'}
             role="tab"
             aria-selected={activeTab === 'railroad'}
@@ -1561,6 +1552,15 @@
             onkeydown={handleModeKeydown}
             title="Railroad information channels"
           >Railroad</button>
+          <button
+            class="tab-item"
+            class:tab-active={activeTab === 'bowties'}
+            role="tab"
+            aria-selected={activeTab === 'bowties'}
+            onclick={() => activeTab = 'bowties'}
+            onkeydown={handleModeKeydown}
+            title="Bowtie connections view"
+          >Bowties</button>
         </div>
         {#if layoutSession.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
@@ -2099,7 +2099,7 @@
     margin: 0 4px;
   }
 
-  /* ── Tab strip (Config | Bowties | Railroad) ── */
+  /* ── Tab strip (Config | Railroad | Bowties) ── */
 
   .tab-strip {
     display: flex;

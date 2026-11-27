@@ -1,269 +1,276 @@
 # Using Bowties
 
-This guide walks you through opening a layout, connecting Bowties to your LCC bus, exploring your network, viewing and editing node configuration, and working offline.
+Bowties keeps a saved description of your layout alongside the configuration of its LCC boards. Start by opening a layout and reading your boards. You can then edit settings directly, describe railroad behavior with guided facilities, or work on event connections.
 
-## Opening or creating a layout
+For installation, see [Installing Bowties](installing.md). For Panels and Automatic Block Signals, see [Railroad facilities](railroad.md).
 
-When Bowties starts, it opens to the layout picker. Choose one of these options before doing anything else:
+## Open or create a layout
 
-- Open a known layout from the list.
-- Click **New Layout** to create a new layout folder.
-- Click **Browse...** to open an existing layout folder from disk.
+When no layout is open, Bowties shows the layout picker:
 
-Once a layout is open, Bowties restores the saved node snapshots, pending changes, and any layout-specific connections.
+- **Open** a layout from the known-layout list.
+- Choose **New Layout**, enter a name, and choose the parent folder where Bowties should create it.
+- Choose **Browse...** to open an existing layout folder.
 
-> **Tip:** A layout is a self-contained folder. You can share it with others, back it up, or move it to another computer by copying the entire folder and its contents.
+Bowties restores saved board snapshots, configuration, pending changes, connections, facilities, and channels when you reopen a layout.
 
-## Connecting to your layout
+If you have a recently used layout, Bowties may reopen it automatically at startup rather than show the picker.
 
-Bowties keeps a list of named connections in the **Connect to LCC Network** card for the currently open layout. This card is opened from the connection status button in the top-right corner. When you have not connected yet, that button shows **Offline**.
+> **Backup and sharing:** A layout is a self-contained folder. Copy the entire folder, not just one file, to back it up, share it, or move it to another computer.
 
-Click the top-right **Offline** (or connection status) button to open the connection card. Each saved entry has a **Connect** button, plus an edit (🖊) and remove (×) action. The **`+`** button in the card header opens the Add connection dialog.
+<!-- Screenshot needed: layout picker with a known layout and New Layout/Browse actions. -->
 
-The status indicator in the connection bar turns green once a connection is established.
+![Layout picker with Open, New Layout, and Browse actions](../images/layout-picker.png)
 
-### Adding a connection
+## Connecting to your network
+
+Each layout has its own named connections. Click the connection status button in the top-right corner to open **Connect to LCC Network**. Before connecting, the button shows **Offline**.
+
+### Add a connection
 
 1. Open or create a layout.
-2. Click the top-right **Offline** (or connection status) button to open the **Connect to LCC Network** card.
-3. Click **`+`** in the card.
-4. Enter a **Name** for the connection (for example *Layout hub* or *Workbench SPROG*).
-5. Pick your hardware from the **Device** dropdown. Bowties auto-fills baud rate and flow control for known devices and shows only the fields that device needs.
-6. Fill in the device-specific fields (see table below).
-7. Click **Add**.
+2. Open **Connect to LCC Network** and click **+**.
+3. Enter a name, such as *Layout hub* or *Workbench SPROG*.
+4. Choose your adapter from **Device**.
+5. Enter the settings below. Named presets supply the appropriate baud rate and flow control.
+6. Click **Add**, then **Connect** beside the saved entry.
 
-![Add connection dialog with the RR-CirKits LCC Buffer-USB device selected](../images/add-connection-dialog.png)
+| Device | Hardware | Settings |
+|--------|----------|----------|
+| Network hub (TCP) | JMRI, WifiTrax, or another GridConnect TCP bridge | Host and port; JMRI normally uses `localhost:12021` |
+| RR-CirKits LCC Buffer-USB | Buffer-USB or LCC to Loconet Bridge | Serial port; additional settings are available if needed |
+| SPROG USB-LCC | SPROG USB-LCC CAN adapter | Serial port |
+| SPROG PI-LCC | SPROG Raspberry Pi LCC hat | Serial port |
+| MERG CAN-RS / CANUSB4 | MERG adapters | Serial port; additional settings are available if needed |
+| Canable / Lawicell CANUSB | SLCAN-compatible adapter | Serial port |
+| Other GridConnect adapter | CAN2USBINO or another GridConnect device | Serial port, baud rate, and flow control |
+| Other SLCAN adapter | Another SLCAN-compatible device | Serial port, baud rate, and flow control |
 
-### Device options
+For serial devices, select the correct COM port on Windows, `/dev/cu.*` device on macOS, or `/dev/tty*` device on Linux. Use the rescan button beside the port list if you plugged in the adapter after opening the dialog.
 
-| Device | Use for | Fields you enter |
-|--------|---------|------------------|
-| Network hub (TCP) | JMRI, WifiTrax, or a standalone TCP/IP bridge | Host + Port (JMRI uses `localhost:12021`) |
-| RR-CirKits LCC Buffer-USB | RR-CirKits LCC Buffer-USB, also the LCC to Loconet Bridge | COM port |
-| SPROG USB-LCC | SPROG DCC Ltd USB-LCC CAN adapter | COM port |
-| SPROG PI-LCC | SPROG DCC Ltd Raspberry Pi LCC hat | COM port |
-| Canable / Lawicel CANUSB | SLCAN-compatible USB-CAN adapter | COM port |
-| Other GridConnect adapter | CAN2USBINO, MERG CAN-RS, or any other GridConnect device | COM port + Baud rate + Flow control |
-| Other SLCAN adapter | Any `slcand`-compatible adapter not listed above | COM port + Baud rate + Flow control |
+Use the edit button beside a saved connection to change its settings. To remove one, use its remove button and confirm **Delete**. The status indicator turns green when connected.
 
-For serial devices, choose the correct COM port (Windows), `/dev/cu.*` device (macOS), or `/dev/tty*` device (Linux) from the dropdown. If you plugged the adapter in after opening the dialog, click the **⟳** button next to the COM port list to rescan.
+<!-- Screenshots needed: current connection card and Add connection dialog with a named serial preset. -->
 
-### Connecting, editing, and removing
+![Saved network connections with connect, edit, and remove actions](../images/connection-card.png)
 
-- Click **Connect** next to a saved entry to bring the link up.
-- Click 🖊 to reopen the dialog pre-filled with that entry's settings.
-- Click × and then **Delete** to remove a saved connection.
+![Add connection dialog with a named serial adapter selected](../images/add-connection-dialog.png)
 
-Saved connections persist with the layout.
+## Discover boards and read configuration
 
----
+Connecting discovers boards automatically. Bowties calls these devices **nodes** in configuration and status displays. The Config sidebar shows their names, manufacturers, models, and status.
 
-## Discovering nodes
+Discovery identifies the boards; reading configuration obtains their settings and event IDs.
 
-When you connect to the bus, Bowties discovers nodes automatically. The **Node List** populates with all nodes on your layout, showing manufacturer, model, and online status. Discovery is usually very fast.
+1. Stay on **Config**, the initial tab.
+2. Click **Read Node Configuration** in the main area when prompted.
+3. Follow the progress indicators. Large layouts can take a while.
+4. If **Read Remaining (N)** appears in the toolbar, use it to read configuration for the remaining eligible boards.
 
-## Reading node configuration
+The number beside **Read Remaining** is a count of unread boards, not unfinished facilities or channels. The button can appear while another tab is selected, but it still performs configuration reads.
 
-Before you can view configuration or the Bowties event map, click **Read Node Configuration** in the toolbar. Progress bars show how each node is coming along — on a large layout this can take a while.
+Some boards do not provide configuration data. Read failures are reported; check the affected board rather than assuming a partial read completed successfully. Saved snapshots let you browse captured configuration offline.
 
-![Node list after discovery, showing the Read Node Configuration button](../images/nodes-list.png)
+<!-- Screenshot needed: Config discovery/read view with progress and Read Remaining. -->
 
-Once complete, you can click into any node to view or edit its configuration, or switch to the Bowties view.
+![Discovered boards in Config with configuration-read progress and Read Remaining](../images/nodes-list.png)
 
-> **Note:** Configuration is cached after the first read, so subsequent launches are much faster.
+## Understand the three tabs
 
-## Making and saving changes
+The tabs appear in this order:
 
-After reading node configuration, **Save** and **Discard** buttons appear in the toolbar.
+| Tab | Use it for |
+|-----|------------|
+| **Config** | Read board settings, select daughterboards, inspect configuration, and edit fields |
+| **Railroad** | Describe facilities such as Panels and Automatic Block Signals, and inspect their channels |
+| **Bowties** | Inspect and edit event producer/consumer connections |
 
-- Edit configuration fields in the cards. The toolbar shows how many configuration changes are unsaved.
-- Click **Save** to save your changes in the layout. Each configuration change is recorded in the layout as a **pending change** first.
-- **While connected to the bus**, Save then writes those changes to the boards. A change the board accepted is no longer pending. A write that failed stays pending and the field shows the reason. Save tells you how many changes are still waiting.
-- **While disconnected**, the changes stay pending in the layout until you reconnect (see below).
-- Click **Discard** to abandon unsaved edits and restore the last saved layout state.
+Use the arrow keys on a tab to cycle through the tabs. Configuration references can take you directly to the relevant view.
 
-Your layout always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
+Railroad is a guided-workflow area, not yet a replacement for all board setup. An empty channel list may mean that you still need to select the installed daughterboard in Config. See [preparing for facilities](railroad.md#before-you-start).
 
----
+## Edit, Save, and Discard
 
-## Viewing node configuration
+Changing a field or finishing a facility editor does **not** immediately write to the hardware.
 
-1. Click any node row in the Node List to select it.
-2. The **Configuration View** opens. The left sidebar lists the node's CDI segments. Click a segment to select it.
-3. The main area shows the segment's groups as cards. Each card displays the fields and sub-groups for that configuration group.
-4. Field values are read from the node and shown in-place inside each card.
+| State | Meaning |
+|-------|---------|
+| **Unsaved edit** | A change you are still working on; Save keeps it, Discard abandons it |
+| **Pending change** | Configuration saved in the layout that has not yet been accepted by the board |
 
-![Configuration view showing discovered nodes and a node being edited](../images/config-view-edit.png)
+### Save while connected
 
-Some Event IDs are labeled **Read-only** because the node determines their values. You can select and copy these values, but cannot edit them in Bowties. For example, the Signal-LCC mast Link Address is read-only; the separate Track Circuit Link Address can be edited.
+1. Make your edits.
+2. Review the unsaved-change indication in the toolbar.
+3. Click **Save**.
 
-### Connector daughterboards on supported carrier boards
+Bowties records the layout first, then attempts to write the configuration changes recorded by that Save. Successful writes stop being pending. Failed writes remain pending with a reason; review the outcome rather than assuming every board was updated.
 
-Some RR-CirKits carrier boards include one or more connector slots for optional daughterboards.
+Save is not a substitute for reviewing older pending changes through Sync.
 
-1. Open the supported node's configuration view.
-2. Choose the installed daughterboard for each connector slot from the selector above the affected configuration.
-3. Bowties immediately narrows the visible sections and valid options for the governed lines.
-4. If a new daughterboard makes a current value invalid, Bowties stages the compatible repair before you apply changes.
-5. Save the layout or project to keep those connector selections with that node instance.
+### Save while offline
 
-Nodes without connector-slot metadata keep the normal pre-feature configuration workflow.
+Save keeps your work in the layout folder. Configuration changes remain pending until you reconnect and apply them through Sync.
 
----
+### Discard
 
-## Editing configuration
+**Discard** abandons unsaved work and returns to the saved layout state. It does not erase changes you previously saved as pending or undo writes already accepted by a board.
 
-1. Navigate to the field you want to change in the Configuration View.
-2. Edit the value inside the card:
-   - **Drop-down** fields: choose from the list of options.
-   - **Text / number** fields: click and type the new value.
-   - **Slider** fields: drag the control within the field's valid numeric range. Device profiles may use sliders for suitable values, including Signal-LCC Brightness intensities.
-   - **Event ID** fields: enter a 64-bit event identifier in `XX.XX.XX.XX.XX.XX.XX.XX` format.
-3. Click **Apply** to write the new value to the node.
+A failed layout Save is not successful persistence: resolve the error before closing. Closing with unsaved work prompts you to decide what to do.
 
-The field indicator changes to ✓ when the write is confirmed by the node.
+> **Older layouts:** Automatic Block Indicator conversion has a special Discard rule. See [migration](railroad.md#opening-layouts-with-block-indicators).
 
----
+<!-- Screenshot needed: an edited Config field with unsaved indication, Save, and Discard. -->
 
-## Bowties view (event relationship map)
+![Configuration edit with an unsaved-change indication and Save and Discard controls](../images/config-view-edit.png)
 
-The **Bowties View** shows a visual map of event producer/consumer relationships across your entire layout.
+## Configure a board
 
-![Bowties view showing two buttons wired to a turnout's direction and indicator LED](../images/bowties-view.png)
+1. Select a board in the **Config** sidebar.
+2. Select a CDI segment beneath it. CDI is the board's description of its available configuration.
+3. Use the cards and groups to find the field you need.
+4. Edit a dropdown, text field, number, slider, or Event ID.
+5. Use **Save** as described above.
 
-- Each **bowtie** shape represents an event shared between one or more producers and one or more consumers.
-- **Half-bowties** represent events that have producers but no consumers yet, or vice versa.
-- **Hovering** a bowtie shows a summary tooltip (node name, segment, element).
-- **Clicking** a bowtie jumps to that element in the Configuration View.
+Event IDs use `XX.XX.XX.XX.XX.XX.XX.XX` format. Fields marked **Read-only** can be selected and copied but cannot be changed. For example, the Signal-LCC mast Link Address is read-only; the separate Track Circuit Link Address is editable.
 
-Use the filter bar at the top to show:
+### Select installed daughterboards
 
-| Filter | Description |
-|--------|-------------|
-| Connected Only | Bowties with both a producer and consumer |
-| Unconnected | Half-bowties only |
-| All | Everything |
+On supported carrier boards:
 
-### Creating a new connection
+1. Select the carrier board in Config.
+2. Choose the daughterboard installed in each connector slot.
+3. Review the resulting visible sections and available field options.
+4. Review any compatible repairs Bowties stages when the selection makes an existing value invalid.
+5. Save to keep the selection and any resulting configuration edits.
 
-To link a producer to a consumer:
+The selection describes the hardware attached to that board instance. It also helps Bowties identify channels for Railroad workflows. Boards without connector metadata continue to use their normal configuration view.
 
-1. Click **+ New Connection** in the Bowties view toolbar.
-2. In the **New Connection** dialog, use the **Producer** panel (left) to pick the element that sends the event.
-3. Use the **Consumer** panel (right) to pick the element that should respond to it.
-4. Optionally enter a name for the connection.
-5. Click **Create Connection**. Bowties resolves the event ID (preferring an already-configured side) and writes it to the other side.
+For detector daughterboards, follow [Set up block detection](block-detection.md) to match channels to track sections, name the blocks, check the input events, and verify occupied/clear reports before using them in facilities.
 
-You can also start a connection from the Configuration View: click **→ New Connection** next to any event ID field in a card. The dialog opens with that element pre-filled on the appropriate side.
+## Work with railroad facilities
 
-![New Connection dialog with a planning bowtie being created](../images/planning-bowtie.png)
+Open **Railroad** to see **Facilities** and **Channels**.
 
----
+- A **Panel** associates detected blocks with indicator lamps.
+- **Automatic Block Signals** describes a run of blocks and the signals protecting them.
+- **Channels** describe railroad inputs and outputs and show where facilities use them.
 
-## Facilities (preview)
+These facilities are **preview features**. Their editors help translate layout intent into board configuration, but you still need appropriate detection, supported boards, and wiring choices.
 
-The **Railroad** tab includes a **Facilities** section for Panels and Automatic Block Signals.
+See [Railroad facilities](railroad.md) for step-by-step creation, editing, removal, and limitations.
 
-> **Preview feature.** Facilities are an early, evolving area of Bowties. The shape of facilities — what templates exist, how their slots are filled, and what they do once complete — is expected to change in upcoming releases. Feedback on this area is especially welcome.
+## Work with Bowties
 
-### What you can do today
+The **Bowties** tab shows connection cards, not a track diagram. A card groups the producers and consumers of an event:
 
-- **Add a Panel**, give it a name, and add detected blocks in the Blocks step.
-- In **Wiring**, choose each block's lamp board and pin. **Lit when** defaults to Occupied; choose Clear for the opposite behavior.
-- **Done** stages the panel and its configuration changes. **Cancel** leaves the saved layout unchanged.
-- **Edit** a panel to change its blocks or wiring. **Remove** confirms the board resources being released.
-- **Save** persists the changes; while connected it also writes the staged configuration to the boards. Offline, configuration changes wait for Sync.
+- A **producer** sends an event, such as a button press or an occupancy change.
+- A **consumer** responds to an event, such as changing a turnout or lighting a lamp.
+- An incomplete connection may have only one side.
+- A planning bowtie can hold a name before you choose its elements.
 
-Facilities and their names — along with every channel binding — are saved with the layout. Closing and reopening Bowties restores them exactly as you left them.
+Use **Filter by name** to find a connection; the search also matches Event IDs. Click an element's configuration link to inspect its settings. Cards offer actions to rename, tag, and add producers or consumers.
 
-### Opening layouts with Block Indicators
+<!-- Screenshot needed: current Bowties cards, producer/consumer links, and name filter. -->
 
-Block Indicator has been replaced by Panel. Conversion happens automatically when an older layout opens; there is no wizard.
+![Bowties connection cards with producer and consumer links and the name filter](../images/bowties-view.png)
 
-- Indicators are grouped into one panel per lamp board, preserving block order. Old facility names become lamp-channel names.
-- Blocks without a lamp appear in **Indicators without a lamp**, marked Incomplete. Indicators without a block are dropped. Malformed entries and same-panel duplicate blocks or lamps produce explicit warnings; the first accepted entry is kept.
-- A notice gives the numbers converted. **Save** keeps the converted layout. Failed Save leaves it unsaved.
-- **Discard** acknowledges conversion for this open session but keeps the converted panels. Reopening the unchanged older file converts it again.
-- Existing events, lamp rows and Lamp Selection are unchanged. Conversion creates no configuration changes or new Sync work; already-working lamps keep working.
-- Old bowtie names remain on the **Bowties** tab. A converted lamp with no pin still needs wiring through **Edit**.
+### Create a connection
 
-### Automatic Block Signals
+1. Click **+ New Connection**.
+2. Choose an element in the **Producer** panel and one in the **Consumer** panel.
+3. Optionally name the connection.
+4. Click **Create Connection**.
+5. Review the staged configuration changes and click **Save**.
 
-**Add facility** also offers **Automatic Block Signals**, which sets up signals for a run of detected blocks on a Signal-LCC. This first release covers one direction of travel, three aspects (Stop, Approach, Clear) and one red/green searchlight per signal that is always lit. Other choices are shown but greyed out. **Interlocking Plant** is listed too but is not available yet.
+Bowties resolves a shared Event ID, preferring an existing configured connection where appropriate. Check the selected elements' existing connections before saving: assigning a different Event ID can change what an element responds to.
 
-The editor has four pages. You can move between them with the steps at the top, and **Cancel** discards everything until you press **Done**.
+For an eligible unconnected Event ID field in Config, **New Connection** opens the dialog with that element already selected.
 
-- **Blocks.** List your detected blocks in the order a train passes them. Each block gets a signal at its entrance; use **⋯** on a block's row to join it to the block above, so one signal protects both (for example a short detection section). Under each block you can list its hand-thrown turnouts on the main by name; for now they are placeholders, not connected to turnout position inputs, so each one is treated as not lined for the main. The chips at each end of the track diagram set what lies beyond the last block.
-- **Live occupancy.** While you are connected, each block's dot shows **Occupied** or **Clear** as its detector reports. A dashed dot means there is no reading yet, for example before a train has moved through the block or while you are offline.
-- **Aspects.** Shows the rules each signal follows: Stop while any block it protects is occupied, Approach when the next signal shows Stop, otherwise Clear.
-- **Appearance.** Shows the searchlight each signal uses.
-- **Wiring.** For each signal, choose the Signal-LCC it runs on and the pins its red and green lamps are wired to. Pins already used by another facility can't be chosen. If a pin is used by something configured on the board outside Bowties, you can release it so the signal can use it. Bowties checks your choices and lists anything needing attention before you can press **Done**.
+### Create a planning bowtie
 
-When you press **Done**, the facility appears on the Railroad tab and its changes join your unsaved changes; **Discard** undoes them. **Save** records the board settings in the layout and, when you are connected, writes them to each Signal-LCC. Until every setting has been written, the facility card shows **Waiting** with a line for each board. If you saved offline, the settings are written when you next sync. Bowties does not yet read the settings back to confirm them.
+Enter a connection name without selecting either side, then choose **Create Planning Bowtie**. Save to keep it in the layout. Add producers and consumers later as you work out the connection.
 
-The facility card on the Railroad tab draws the facility's track diagram with live occupancy. Use **Edit** on the card to change the facility; every page opens with your saved choices. Use **Remove** to delete it: Bowties lists what it will reset on each board, resets only the settings this facility made, and keeps your blocks and detectors. A facility can span several Signal-LCC boards; Bowties arranges the logic on each board and may move another facility's logic on the same board to make room.
----
+Connection creation is unavailable when all nodes are offline. Existing saved data remains available for inspection.
 
-## Reconnecting with pending changes
+> Removing a card or its metadata should not be treated as proof that the board's Event IDs have been reset. Check configuration before relying on a connection being disconnected.
 
-If you saved a layout with pending changes and later reconnect with that layout, Bowties opens the **Sync Pending Changes** flow so you can review and apply them safely.
+<!-- Screenshot needed: New Connection dialog with selections, and its name-only planning state. -->
 
----
+![New Connection dialog with a producer and consumer selected](../images/new-connection.png)
 
-## Syncing pending changes back to the bus
+![Name-only connection with the Create Planning Bowtie action](../images/planning-bowtie.png)
 
-When a saved layout with pending changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
+## Work offline and reconnect
 
-- **Conflicts** require you to choose whether to apply your value or skip it.
-- **Clean changes** are ready to apply and are selected by default.
-- **Already applied** changes are cleared automatically and reported as a count.
-- **Missing nodes** stay pending in the layout until those nodes are present again.
+Open a captured layout without connecting to browse saved settings and plan changes. Live occupancy is not available offline; saved configuration is a snapshot, not a new measurement.
 
-If Bowties is not confident the connected bus matches the saved layout, it asks whether this is the **Target layout bus** or a **Bench / other bus** before showing apply choices.
+When you reconnect with pending changes, Bowties compares your planned values with the board values in **Sync Pending Changes**:
 
----
+- **Clean changes** are ready to apply and selected by default.
+- **Conflicts** require a decision about applying your planned value or keeping the bus value.
+- **Already applied** changes are cleared and reported.
+- **Missing nodes** keep their pending changes until those boards are present.
 
-## Advanced Configuration
+If Bowties cannot confidently identify the connected network as your layout, it asks whether this is the **Target layout bus** or a **Bench / other bus** before presenting apply choices.
 
-Bowties reads an optional `tuning.toml` file from the application data directory at startup. This file lets you adjust datagram timing parameters without rebuilding the application — useful when troubleshooting CAN gateway connectivity issues.
+Review the selected changes, use **Apply** in the Sync panel, and check the result. This Apply action is different from editing a Config field: field edits use Save, not a per-field Apply button.
 
-**File location:**
+<!-- Screenshot needed: Sync review showing a conflict, a clean change, and a missing node. -->
 
-| Platform | Path |
-|----------|------|
-| Windows  | `%APPDATA%\com.lcc.bowties\tuning.toml` |
-| macOS    | `~/Library/Application Support/com.lcc.bowties/tuning.toml` |
-| Linux    | `~/.config/com.lcc.bowties/tuning.toml` |
-
-**Example `tuning.toml`:**
-
-```toml
-# Delay (ms) after acknowledging a reply datagram before sending the next
-# request. Increase if reads through a CAN gateway time out intermittently.
-post_ack_delay_ms = 10
-
-# Per-attempt timeout (ms) waiting for a memory-config read reply.
-read_timeout_ms = 3000
-
-# Maximum retries when a node rejects with the resend-OK flag.
-max_datagram_retries = 3
-```
-
-All fields are optional — omitted fields use the built-in defaults shown above. Changes take effect the next time you launch the application.
-
----
+![Sync review showing a conflict, a clean change, and a missing board](../images/sync-review.png)
 
 ## Troubleshooting
 
-**No nodes appear after connecting**
-- Check that the connection status is green (top-right button shows a colored status, not "Offline").
-- Ensure your LCC network has power and that at least one node is online.
-- If you still see no nodes after a few seconds, try disconnecting and reconnecting — some nodes respond slowly on first boot.
+### No boards appear after connecting
 
-**A USB adapter is not listed**
-- Check Device Manager (Windows), System Information → USB (macOS), or `dmesg` (Linux) to confirm the adapter is recognized as a serial port.
-- Click the **⟳** button next to the COM port dropdown to rescan after plugging the adapter in.
+- Check that the top-right connection status is green.
+- For TCP, verify the host and port; JMRI normally uses port 12021.
+- For serial, verify the port and choose the correct named adapter preset.
+- Check power and CAN cabling. Try disconnecting and reconnecting if boards respond slowly.
 
-**Configuration changes are not accepted**
-- Some nodes require a reboot before new configuration takes effect. Check the node's manual.
-- Ensure you are connected when clicking Apply — a dropped connection will prevent writes.
+### A USB adapter is not listed
+
+- Check Device Manager on Windows, System Information on macOS, or `dmesg` on Linux.
+- Rescan the port list after plugging in the adapter.
+- Check that the required USB serial driver is installed.
+
+### Railroad has no channels or blocks to choose
+
+- Follow [Set up block detection](block-detection.md) for the complete detector-to-channel workflow.
+- Read the relevant board configuration in Config.
+- Select installed daughterboards on supported carrier boards.
+- Confirm that the detection channels needed by your facility are available.
+- Follow any wiring issues reported by the facility editor.
+
+### Changes are saved but the board has not changed
+
+- Check whether you saved offline.
+- Review pending changes and write-failure reasons.
+- Reconnect to the appropriate bus and review Sync.
+- Some settings need a board reboot to take effect; consult its manual.
+
+## Advanced configuration
+
+Bowties reads an optional `tuning.toml` at startup from its application data directory:
+
+| Platform | Location |
+|----------|----------|
+| Windows | `%APPDATA%\com.lcc.bowties\tuning.toml` |
+| macOS | `~/Library/Application Support/com.lcc.bowties/tuning.toml` |
+| Linux | `~/.config/com.lcc.bowties/tuning.toml` |
+
+The following values are the built-in defaults:
+
+```toml
+# Delay after acknowledging a reply datagram, in milliseconds.
+post_ack_delay_ms = 0
+
+# Per-attempt memory-configuration read timeout, in milliseconds.
+read_timeout_ms = 3000
+
+# Retry limit for retryable datagram exchanges.
+max_datagram_retries = 3
+```
+
+All fields are optional. Restart Bowties after changing this file. Adjust timing only when troubleshooting a specific connection problem; extra delay is not normally required.

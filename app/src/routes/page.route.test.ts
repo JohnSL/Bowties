@@ -727,14 +727,32 @@ describe('+page Railroad tab (Spec 015 / S1)', () => {
     });
   });
 
-  it('tab strip has tablist role and contains Config, Bowties, Railroad in order', async () => {
+  it('tab strip displays Config, Railroad, Bowties in order with Config selected initially', async () => {
     render(Page);
     await waitFor(() => {
       const tablist = screen.getByRole('tablist', { name: /view mode/i });
       expect(tablist).toBeInTheDocument();
       const tabs = screen.getAllByRole('tab');
-      expect(tabs.map(t => t.textContent?.trim())).toEqual(['Config', 'Bowties', 'Railroad']);
+      expect(tabs.map(t => t.textContent?.trim())).toEqual(['Config', 'Railroad', 'Bowties']);
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
     });
+  });
+
+  it('arrow keys select tabs in displayed order and wrap around', async () => {
+    render(Page);
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Config' })).toHaveAttribute('aria-selected', 'true'));
+
+    for (const [key, expected] of [
+      ['ArrowRight', 'Railroad'],
+      ['ArrowRight', 'Bowties'],
+      ['ArrowRight', 'Config'],
+      ['ArrowLeft', 'Bowties'],
+      ['ArrowLeft', 'Railroad'],
+      ['ArrowLeft', 'Config'],
+    ]) {
+      await fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key });
+      expect(screen.getByRole('tab', { selected: true })).toHaveTextContent(expected);
+    }
   });
 
   it('no icon spans exist in the tab strip', async () => {
