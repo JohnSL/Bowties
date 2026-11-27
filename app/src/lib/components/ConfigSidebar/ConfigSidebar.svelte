@@ -1,13 +1,19 @@
 <script lang="ts">
+  import {
+    pendingChangesView,
+    connectorSelectionsView,
+    connectorsGetWarnings,
+    layoutSession,
+    effectiveNodeStore,
+  } from '$lib/layout';
+
   import { createEventDispatcher, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { configSidebarStore } from '$lib/stores/configSidebar';
-  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
+
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
-  import { effectiveNodeStore } from '$lib/layout';
+
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
@@ -119,11 +125,11 @@
   // Spec 014 / S8.5: placeholders now live in `nodeInfoStore` alongside
   // real discovered nodes (keyed by `placeholder:<uuidv4>`) and flow
   // through the same sidebar entry list — no separate loop / store.
-  let nodeEntries = $derived(buildSidebarNodeEntries(nodes, layoutStore.activeContext?.layoutNodeIds));
+  let nodeEntries = $derived(buildSidebarNodeEntries(nodes, layoutSession.activeContext?.layoutNodeIds));
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
-  let persistedRows = $derived(pendingChangesStore.persistedRows);
-  let connectorRevision = $derived(connectorSelectionsStore.revision);
+  let persistedRows = $derived(pendingChangesView.persistedRows);
+  let connectorRevision = $derived(connectorSelectionsView.revision);
   // S8: the threshold-gated list of fully-captured unsaved-new nodes; used in
   // the loop below to flip the per-node "unsaved" dot on once a node crosses
   // the capture threshold. Read as a Set for O(1) lookup.
@@ -150,10 +156,10 @@
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
         {@const tree = nodeTreeStore.getTree(nodeId) ?? null}
         {@const nodePending = getNodePendingState(nodeId, tree, $layoutOpenInProgress, persistedRows)}
-        {@const connectorWarnings = connectorRevision >= 0 ? connectorSelectionsStore.getWarnings(nodeId) : []}
+        {@const connectorWarnings = connectorRevision >= 0 ? connectorsGetWarnings(nodeId) : []}
         {@const isConfigNotRead = shouldShowConfigNotReadBadge({
           configReadNodes,
-          layoutIsOfflineMode: layoutStore.isOfflineMode,
+          layoutIsOfflineMode: layoutSession.isOfflineMode,
           layoutOpenInProgress: $layoutOpenInProgress,
           node,
           nodeId,

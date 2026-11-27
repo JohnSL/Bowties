@@ -150,6 +150,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `unsavedChangesGuard.ts`
 - **Store:** `changeTracker.svelte.ts`, `configChanges.svelte.ts`
 - **Component:** `DiscardConfirmDialog.svelte`
+- **Discard:** `SaveControls` → `discardLayoutEdits()` (`layoutDiscardOrchestrator.ts`, via `$lib/layout`) → `layoutEditParticipants` in fixed order (Spec 021 S6). Placeholder add/delete is not undone yet (S7).
 - **Window close:** `+page.svelte` `onCloseRequested` always prevents native close, checks `hasUnsavedPromptChanges`, shows the unsaved dialog when dirty, calls `disconnect_lcc` IPC for graceful LCC teardown before exiting. Menu Exit uses the same `promptUnsaved` + disconnect path.
 
 ## Native Menu Wiring (S4)

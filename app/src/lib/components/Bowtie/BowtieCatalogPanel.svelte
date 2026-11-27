@@ -7,11 +7,21 @@
 -->
 
 <script lang="ts">
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { effectiveLayoutStore } from '$lib/layout';
-  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
+  import {
+    metadataAddTag,
+    metadataAdoptEventId,
+    recordRoleClassification,
+    metadataCreateBowtie,
+    recordBowtieDeletion,
+    metadataDemoteToPlanningBowtie,
+    metadataGetAllTags,
+    metadataRemoveTag,
+    metadataRenameBowtie,
+    layoutSession,
+    bowtieCatalogView,
+    effectiveLayoutStore,
+  } from '$lib/layout';
+
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
@@ -48,12 +58,12 @@
   } = $props();
 
   // Store access
-  let catalog = $derived(bowtieCatalogStore.catalog);
-  let readComplete = $derived(bowtieCatalogStore.readComplete);
-  let hasLayoutFile = $derived(layoutStore.hasLayoutFile);
+  let catalog = $derived(bowtieCatalogView.catalog);
+  let readComplete = $derived(bowtieCatalogView.readComplete);
+  let hasLayoutFile = $derived(layoutSession.hasLayoutFile);
   let preview = $derived(effectiveLayoutStore.preview);
   let previewCards = $derived(preview.bowties);
-  let connectionCount = $derived(bowtieCatalogStore.displayableBowties.length);
+  let connectionCount = $derived(bowtieCatalogView.displayableBowties.length);
 
   // T044: Filter bar state
   let filterText = $state('');
@@ -161,7 +171,7 @@
     if (!producer && !consumer) {
       if (name.trim()) {
         const placeholderKey = `planning-${Date.now()}`;
-        bowtieMetadataStore.createBowtie(placeholderKey, name.trim());
+        metadataCreateBowtie(placeholderKey, name.trim());
       }
       return;
     }
@@ -179,7 +189,7 @@
     }
 
     // Track bowtie metadata
-    bowtieMetadataStore.createBowtie(eventIdHex, name || undefined);
+    metadataCreateBowtie(eventIdHex, name || undefined);
   }
 
   /**
@@ -240,7 +250,7 @@
       // Adopt the selected element's event ID as the bowtie's canonical event ID.
       // LCC nodes always have manufacturer-assigned event IDs in their slots, so
       // we unconditionally use whatever is there — no node write needed.
-      bowtieMetadataStore.adoptEventId(card.eventIdHex, selection.currentEventId);
+      metadataAdoptEventId(card.eventIdHex, selection.currentEventId);
       return;
     }
 
@@ -317,7 +327,7 @@
     if (!card) return;
     // Demote to planning: replace the real event ID with a planning placeholder.
     // The node's event slot is left unchanged — no hardware write needed.
-    bowtieMetadataStore.demoteToPlanningBowtie(card.eventIdHex);
+    metadataDemoteToPlanningBowtie(card.eventIdHex);
   }
 
   function confirmDeleteBowtie() {
@@ -325,7 +335,7 @@
     deleteConfirmDialog = { visible: false, card: null, pendingEntry: null };
     if (card && pendingEntry) {
       doRemoveElement(card, pendingEntry);
-      bowtieMetadataStore.deleteBowtie(card.eventIdHex);
+      recordBowtieDeletion(card.eventIdHex);
     }
   }
 
@@ -337,26 +347,26 @@
 
   function handleReclassifyConfirm(nodeId: string, elementPath: string[], role: 'Producer' | 'Consumer') {
     const key = `${nodeId}:${elementPath.join('/')}`;
-    bowtieMetadataStore.classifyRole(key, role);
+    recordRoleClassification(key, role);
   }
 
   // ── T042: Rename bowtie ────────────────────────────────────────────────
 
   function handleRename(eventIdHex: string, newName: string) {
-    bowtieMetadataStore.renameBowtie(eventIdHex, newName);
+    metadataRenameBowtie(eventIdHex, newName);
   }
 
   // ── T049: Tag management ───────────────────────────────────────────────
 
   function handleAddTag(eventIdHex: string, tag: string) {
-    bowtieMetadataStore.addTag(eventIdHex, tag);
+    metadataAddTag(eventIdHex, tag);
   }
 
   function handleRemoveTag(eventIdHex: string, tag: string) {
-    bowtieMetadataStore.removeTag(eventIdHex, tag);
+    metadataRemoveTag(eventIdHex, tag);
   }
 
-  let allKnownTags = $derived(bowtieMetadataStore.getAllTags());
+  let allKnownTags = $derived(metadataGetAllTags());
 
   // Disable "New Connection" when every live node is offline (NotResponding).
   let allNodesOffline = $derived(
@@ -527,7 +537,7 @@
         onClassify={(role) => {
           const sel = classifyBeforeConnect!.selection;
           const key = `${sel.nodeId}:${sel.elementPath.join('/')}`;
-          bowtieMetadataStore.classifyRole(key, role);
+          recordRoleClassification(key, role);
           if (role === 'Producer') {
             prefillProducer = sel;
             prefillConsumer = null;

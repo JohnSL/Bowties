@@ -2,11 +2,9 @@
  * `$lib/layout` — the single import surface for layout-state reads and writes
  * from routes and components (ADR-0004).
  *
- * Components must not reach past this module into the four edit-layer stores
- * (`bowtieCatalogStore`, `bowtieMetadataStore`, `configChangesStore`,
- *  `layoutStore`). Those stores keep their current responsibilities but are
- * internal implementation details of the facade and the
- * `saveLayoutOrchestrator`.
+ * Components must not reach past this module into the edit-layer stores.
+ * The facade provides read projections and named commands instead. Those stores
+ * remain internal implementation details of the facade and orchestrators.
  *
  * What lives here:
  *   - `effectiveLayoutStore`         — read model (effectiveBowties,
@@ -24,6 +22,12 @@
  *   - rendering. The facade returns data; components render it.
  */
 
+import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+import { layoutStore } from '$lib/stores/layout.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
@@ -178,7 +182,9 @@ export function buildElementSelection(leaf: LeafConfigNode, nodeId: NodeKeyInput
   };
 }
 
-// ── Save workflow ────────────────────────────────────────────────────────────
+// ── Save and discard workflows ───────────────────────────────────────────────
+
+export { discardLayoutEdits } from '$lib/orchestration/layoutDiscardOrchestrator';
 
 export {
   saveLayoutOrchestrated,
@@ -186,7 +192,55 @@ export {
   type SaveLayoutOrchestratedResult,
 } from '$lib/orchestration/saveLayoutOrchestrator';
 
-// ── Edit-recording commands ──────────────────────────────────────────────────
+// ── Bowtie catalog ───────────────────────────────────────────────────────────
+
+export const bowtieCatalogView = {
+  get catalog() { return bowtieCatalogStore.catalog; },
+  get readComplete() { return bowtieCatalogStore.readComplete; },
+  get displayableBowties() { return bowtieCatalogStore.displayableBowties; },
+  get effectiveNodeSlotMap() { return bowtieCatalogStore.effectiveNodeSlotMap; },
+};
+
+export function catalogGetDisplayName(...args: Parameters<typeof bowtieCatalogStore.getDisplayName>) {
+  return bowtieCatalogStore.getDisplayName(...args);
+}
+
+export function catalogSetCatalog(...args: Parameters<typeof bowtieCatalogStore.setCatalog>) {
+  return bowtieCatalogStore.setCatalog(...args);
+}
+
+export function catalogStartListening(...args: Parameters<typeof bowtieCatalogStore.startListening>) {
+  return bowtieCatalogStore.startListening(...args);
+}
+
+// ── Layout session ───────────────────────────────────────────────────────────
+
+export const layoutSession = {
+  get activeContext() { return layoutStore.activeContext; },
+  get hasLayoutFile() { return layoutStore.hasLayoutFile; },
+  get isConnected() { return layoutStore.isConnected; },
+  get isOfflineMode() { return layoutStore.isOfflineMode; },
+  get isLoaded() { return layoutStore.isLoaded; },
+  get layout() { return layoutStore.layout; },
+};
+
+export function layoutSetConnected(...args: Parameters<typeof layoutStore.setConnected>) {
+  return layoutStore.setConnected(...args);
+}
+
+export function layoutMarkClean(...args: Parameters<typeof layoutStore.markClean>) {
+  return layoutStore.markClean(...args);
+}
+
+export function layoutHydrateFromBackend(...args: Parameters<typeof layoutStore.hydrateFromBackend>) {
+  return layoutStore.hydrateFromBackend(...args);
+}
+
+export function layoutSetActiveContext(...args: Parameters<typeof layoutStore.setActiveContext>) {
+  return layoutStore.setActiveContext(...args);
+}
+
+// ── Bowtie metadata ──────────────────────────────────────────────────────────
 
 /** Record a pending bowtie deletion. Honoured immediately by the read model. */
 export function recordBowtieDeletion(eventIdHex: string): void {
@@ -201,7 +255,179 @@ export function recordRoleClassification(
   bowtieMetadataStore.classifyRole(slotKey, role);
 }
 
+export function metadataGetAllTags(...args: Parameters<typeof bowtieMetadataStore.getAllTags>) {
+  return bowtieMetadataStore.getAllTags(...args);
+}
+
+export function metadataCreateBowtie(...args: Parameters<typeof bowtieMetadataStore.createBowtie>) {
+  return bowtieMetadataStore.createBowtie(...args);
+}
+
+export function metadataAdoptEventId(...args: Parameters<typeof bowtieMetadataStore.adoptEventId>) {
+  return bowtieMetadataStore.adoptEventId(...args);
+}
+
+export function metadataDemoteToPlanningBowtie(...args: Parameters<typeof bowtieMetadataStore.demoteToPlanningBowtie>) {
+  return bowtieMetadataStore.demoteToPlanningBowtie(...args);
+}
+
+export function metadataRenameBowtie(...args: Parameters<typeof bowtieMetadataStore.renameBowtie>) {
+  return bowtieMetadataStore.renameBowtie(...args);
+}
+
+export function metadataAddTag(...args: Parameters<typeof bowtieMetadataStore.addTag>) {
+  return bowtieMetadataStore.addTag(...args);
+}
+
+export function metadataRemoveTag(...args: Parameters<typeof bowtieMetadataStore.removeTag>) {
+  return bowtieMetadataStore.removeTag(...args);
+}
+
+export function metadataClearAll(...args: Parameters<typeof bowtieMetadataStore.clearAll>) {
+  return bowtieMetadataStore.clearAll(...args);
+}
+
+// ── Configuration drafts ─────────────────────────────────────────────────────
+
 /** Record a pending config value draft for a single leaf. */
 export function recordConfigDraft(editKey: string, value: TreeConfigValue): void {
   configChangesStore.set(editKey, value);
 }
+
+export function configChangeLayers(...args: Parameters<typeof configChangesStore.changeLayers>) {
+  return configChangesStore.changeLayers(...args);
+}
+
+export function configHasDraftsForNode(...args: Parameters<typeof configChangesStore.hasDraftsForNode>) {
+  return configChangesStore.hasDraftsForNode(...args);
+}
+
+export function configOverrideValue(...args: Parameters<typeof configChangesStore.overrideValue>) {
+  return configChangesStore.overrideValue(...args);
+}
+
+export function configVisibleValue(...args: Parameters<typeof configChangesStore.visibleValue>) {
+  return configChangesStore.visibleValue(...args);
+}
+
+export function configRevert(...args: Parameters<typeof configChangesStore.revert>) {
+  return configChangesStore.revert(...args);
+}
+
+export function configDraftEntries(...args: Parameters<typeof configChangesStore.draftEntries>) {
+  return configChangesStore.draftEntries(...args);
+}
+
+export function configClearAllDrafts(...args: Parameters<typeof configChangesStore.clearAllDrafts>) {
+  return configChangesStore.clearAllDrafts(...args);
+}
+
+export function configPruneResolvedDraftsForNode(...args: Parameters<typeof configChangesStore.pruneResolvedDraftsForNode>) {
+  return configChangesStore.pruneResolvedDraftsForNode(...args);
+}
+
+// ── Railroad channels ──
+
+export const channelsView = {
+  get channels() { return channelsStore.channels; },
+  get groupedByHardware() { return channelsStore.groupedByHardware; },
+  get isEmpty() { return channelsStore.isEmpty; },
+};
+
+export function channelsLoadChannels(...args: Parameters<typeof channelsStore.loadChannels>) {
+  return channelsStore.loadChannels(...args);
+}
+
+export function channelsRenameChannel(...args: Parameters<typeof channelsStore.renameChannel>) {
+  return channelsStore.renameChannel(...args);
+}
+
+// ── Facilities ──
+
+export const facilitiesView = {
+  get facilities() { return facilitiesStore.facilities; },
+  get isEmpty() { return facilitiesStore.isEmpty; },
+  get migrationNotice() { return facilitiesStore.migrationNotice; },
+};
+
+export function facilitiesLoadFacilities(...args: Parameters<typeof facilitiesStore.loadFacilities>) {
+  return facilitiesStore.loadFacilities(...args);
+}
+
+export function facilitiesAcknowledgeMigrationNotice(...args: Parameters<typeof facilitiesStore.acknowledgeMigrationNotice>) {
+  return facilitiesStore.acknowledgeMigrationNotice(...args);
+}
+
+export function facilitiesAddFacility(...args: Parameters<typeof facilitiesStore.addFacility>) {
+  return facilitiesStore.addFacility(...args);
+}
+
+export function facilitiesRenameFacility(...args: Parameters<typeof facilitiesStore.renameFacility>) {
+  return facilitiesStore.renameFacility(...args);
+}
+
+// ── Connector selections ──
+
+export const connectorSelectionsView = {
+  get revision() { return connectorSelectionsStore.revision; },
+  get totalWarningCount() { return connectorSelectionsStore.totalWarningCount; },
+};
+
+export function connectorsGetWarnings(...args: Parameters<typeof connectorSelectionsStore.getWarnings>) {
+  return connectorSelectionsStore.getWarnings(...args);
+}
+
+export function connectorsGetDocument(...args: Parameters<typeof connectorSelectionsStore.getDocument>) {
+  return connectorSelectionsStore.getDocument(...args);
+}
+
+export function connectorsGetError(...args: Parameters<typeof connectorSelectionsStore.getError>) {
+  return connectorSelectionsStore.getError(...args);
+}
+
+export function connectorsGetProfile(...args: Parameters<typeof connectorSelectionsStore.getProfile>) {
+  return connectorSelectionsStore.getProfile(...args);
+}
+
+export function connectorsHydrateFromLayout(...args: Parameters<typeof connectorSelectionsStore.hydrateFromLayout>) {
+  return connectorSelectionsStore.hydrateFromLayout(...args);
+}
+
+export function connectorsHydrateBaseline(...args: Parameters<typeof connectorSelectionsStore.hydrateBaseline>) {
+  return connectorSelectionsStore.hydrateBaseline(...args);
+}
+
+export function connectorsLoadNode(...args: Parameters<typeof connectorSelectionsStore.loadNode>) {
+  return connectorSelectionsStore.loadNode(...args);
+}
+
+// ── Pending changes ──
+
+export const pendingChangesView = {
+  get persistedRows() { return pendingChangesStore.persistedRows; },
+  get draftRows() { return pendingChangesStore.draftRows; },
+  get pendingCount() { return pendingChangesStore.pendingCount; },
+  get isBusy() { return pendingChangesStore.isBusy; },
+};
+
+export function pendingHasPersistedConfigChange(...args: Parameters<typeof pendingChangesStore.hasPersistedConfigChange>) {
+  return pendingChangesStore.hasPersistedConfigChange(...args);
+}
+
+export function pendingFindPersistedConfigChange(...args: Parameters<typeof pendingChangesStore.findPersistedConfigChange>) {
+  return pendingChangesStore.findPersistedConfigChange(...args);
+}
+
+export function pendingRevertToBaseline(...args: Parameters<typeof pendingChangesStore.revertToBaseline>) {
+  return pendingChangesStore.revertToBaseline(...args);
+}
+
+export function pendingRecordDraftsToBackend(...args: Parameters<typeof pendingChangesStore.recordDraftsToBackend>) {
+  return pendingChangesStore.recordDraftsToBackend(...args);
+}
+
+export function pendingReloadFromBackend(...args: Parameters<typeof pendingChangesStore.reloadFromBackend>) {
+  return pendingChangesStore.reloadFromBackend(...args);
+}
+
+export type { ActiveLayoutContext } from '$lib/stores/layout.svelte';

@@ -1,4 +1,17 @@
 <script lang="ts">
+  import {
+    pendingChangesView,
+    pendingFindPersistedConfigChange,
+    pendingRevertToBaseline,
+    configChangeLayers,
+    configRevert,
+    configVisibleValue,
+    layoutSession,
+    catalogGetDisplayName,
+    effectiveLayoutStore,
+    buildElementSelection,
+  } from '$lib/layout';
+
   /**
    * TreeLeafRow — renders a single leaf node from the unified tree.
    *
@@ -15,13 +28,12 @@
   import { triggerAction } from '$lib/api/config';
   import { recomputeConnectorCompatibility } from '$lib/orchestration/connectorSelectionOrchestrator';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
-  import { configChangesStore } from '$lib/stores/configChanges.svelte';
+
   import { configEditor } from '$lib/stores/configEditor.svelte';
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
+
   import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { formatTreeConfigValue } from '$lib/utils/formatters';
@@ -39,7 +51,7 @@
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
-  import { effectiveLayoutStore, buildElementSelection } from '$lib/layout';
+
   import { untrack } from 'svelte';
 
   let {
@@ -102,7 +114,7 @@
   // ── Derived values ─────────────────────────────────────────────────────────
 
   /** Change layers from the changes store. */
-  let layers = $derived(editKey ? configChangesStore.changeLayers(editKey) : []);
+  let layers = $derived(editKey ? configChangeLayers(editKey) : []);
   let topLayer = $derived(layers[0] ?? null);
   let isDirty = $derived(topLayer?.type === 'draft');
   let hasPendingApply = $derived(layers.some(l => l.type === 'offlinePending'));
@@ -115,7 +127,7 @@
   let isEventIdPlaceholder = $derived.by(() => {
     if (isPlaceholderNode) return false;
     if (!(nodeId.length > 0 && leaf.elementType === 'eventId')) return false;
-    const vis = editKey ? configChangesStore.visibleValue(editKey) : null;
+    const vis = editKey ? configVisibleValue(editKey) : null;
     const ev = vis ?? leaf.value;
     return ev?.type === 'eventId' && ev.bytes[0] === 0;
   });
@@ -127,7 +139,7 @@
   let notWrittenMessage = $derived(
     nodeId && hasPendingApply
       ? resolveLeafNotWrittenMessage(
-          pendingChangesStore.findPersistedConfigChange(
+          pendingFindPersistedConfigChange(
             nodeId,
             leaf.space,
             `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`,
@@ -213,7 +225,7 @@
   );
 
   /** Current display value from changes store layer resolution. */
-  let displayValue = $derived(editKey ? configChangesStore.visibleValue(editKey) ?? leaf.value : leaf.value);
+  let displayValue = $derived(editKey ? configVisibleValue(editKey) ?? leaf.value : leaf.value);
 
   let selectViewState = $derived(resolveLeafSelectViewState({
     leaf,
@@ -301,12 +313,12 @@
 
   async function revertDraft(): Promise<void> {
     if (!editKey) return;
-    configChangesStore.revert(editKey);
+    configRevert(editKey);
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
   async function revertPersistedPendingChange(changeId: string): Promise<void> {
-    await pendingChangesStore.revertToBaseline(changeId);
+    await pendingRevertToBaseline(changeId);
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
@@ -645,7 +657,7 @@
 
     {#if !suppressTransientIndicators && notWrittenMessage}
       <span class="write-error-msg" role="alert">Not written: {notWrittenMessage}</span>
-      {#if layoutStore.isConnected}
+      {#if layoutSession.isConnected}
         <button class="revert-baseline-btn" onclick={() => syncReviewRequestStore.request()}>Review in Sync Panel</button>
       {/if}
     {/if}
@@ -676,7 +688,7 @@
         onclick={() => void revertDraft()}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={pendingChangesStore.isBusy}
+        disabled={pendingChangesView.isBusy}
       >↩ Revert</button>
     {/if}
 
@@ -691,12 +703,12 @@
         class="revert-baseline-btn"
         onclick={() => {
           const offsetKey = `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
-          const row = pendingChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
+          const row = pendingFindPersistedConfigChange(nodeId, leaf.space, offsetKey);
           if (row) void revertPersistedPendingChange(row.changeId);
         }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={pendingChangesStore.isBusy}
+        disabled={pendingChangesView.isBusy}
       >↩ Revert</button>
       {/if}
     {/if}
@@ -723,8 +735,8 @@
           class="used-in-link"
           onclick={handleNavigateToBowties}
           title="View bowtie for event {usedIn.event_id_hex}"
-          aria-label="View bowtie connection for {bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}"
-        >{bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}</button>
+          aria-label="View bowtie connection for {catalogGetDisplayName(usedIn.event_id_hex)}"
+        >{catalogGetDisplayName(usedIn.event_id_hex)}</button>
       </span>
     {/if}
 

@@ -91,11 +91,12 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
 - **Consumers**:
   - [app/src/lib/components/ElementCardDeck/SaveControls.svelte](../app/src/lib/components/ElementCardDeck/SaveControls.svelte#L74) — toolbar derivation via `dirtyBreakdown` snapshot
   - [app/src/lib/components/UnsavedChangesDialog.svelte](../app/src/lib/components/UnsavedChangesDialog.svelte) — per-bucket breakdown rendering
-  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L164) — `promptUnsaved()` reads `isDirty`
-  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L196) — `hasInMemoryEdits` derivation
-  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L954) — window-close handler reads `isDirty` + `dirtyBreakdown`
-- **Per-slice plumbing rule**: When adding a new edit-bearing store, extend `effectiveNodeStore.dirtyBreakdown` with a new bucket AND update the `isDirty` predicate in the same slice. The store must also register a reset callback in `layoutLifecycleOrchestrator.resetForNewLayout()` (Lifecycle Reset seam). Consumers read exclusively through the `$lib/layout` facade — never re-derive from raw stores.
-- **Last-modified**: 2026-11-26
+  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L193) — `promptUnsaved()` reads `isDirty`
+  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L222) — `hasInMemoryEdits` derivation; `layoutDirty`/`metaDirty` from the `layoutStruct`/`metadata` buckets (Spec 021 S6 removed the raw `layoutStore.isDirty`/`bowtieMetadataStore.isDirty` reads)
+  - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L1000) — window-close handler reads `isDirty` + `dirtyBreakdown`
+- **Discard counterpart** (Spec 021 S6): every bucket must be served by a `layoutEditParticipants` entry, the pending-revert special phase, or a named exemption in `discardBucketExemptions` ([app/src/lib/orchestration/layoutEditParticipants.ts](../app/src/lib/orchestration/layoutEditParticipants.ts)); `layoutEditParticipants.test.ts` fails on an unclassified bucket. `unsavedNewNodes`/`unsavedRemovedNodes` are exempt pending S7.
+- **Per-slice plumbing rule**: When adding a new edit-bearing store, extend `effectiveNodeStore.dirtyBreakdown` with a new bucket AND update the `isDirty` predicate in the same slice, and register a `layoutEditParticipants` discard (or a reasoned exemption). The store must also register a reset callback in `layoutLifecycleOrchestrator.resetForNewLayout()` (Lifecycle Reset seam). Consumers read exclusively through the `$lib/layout` facade — never re-derive from raw stores; `facadeBoundary.test.ts` enforces the import boundary.
+- **Last-modified**: 2026-11-26 (Spec 021 S6: route consumers on aggregate only; Discard participant registry)
 - **Last-audited**: 2026-11-25
 
 ### Notes

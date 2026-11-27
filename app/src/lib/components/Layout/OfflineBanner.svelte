@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+  import { pendingChangesView } from '$lib/layout';
 
-  interface Props {
+
+interface Props {
     capturedAt: string | null;
     layoutId?: string | null;
     isConnected?: boolean;
@@ -12,7 +13,7 @@
   let { capturedAt, layoutId = null, isConnected = false, isSyncDismissed = false, onsyncrequest }: Props = $props();
 
   const capturedText = $derived(capturedAt ? new Date(capturedAt).toLocaleString() : 'unknown time');
-  const showSyncButton = $derived(isConnected && isSyncDismissed && pendingChangesStore.pendingCount > 0);
+  const showSyncButton = $derived(isConnected && isSyncDismissed && pendingChangesView.pendingCount > 0);
 </script>
 
 <div class="offline-banner" role="status" aria-live="polite">
@@ -23,10 +24,10 @@
     <span class="sep">•</span>
     <span>{layoutId}</span>
   {/if}
-  {#if pendingChangesStore.pendingCount > 0}
+  {#if pendingChangesView.pendingCount > 0}
     <span class="sep">•</span>
     <span class="pending-badge">
-      {pendingChangesStore.pendingCount} pending {pendingChangesStore.pendingCount === 1 ? 'change' : 'changes'}
+      {pendingChangesView.pendingCount} pending {pendingChangesView.pendingCount === 1 ? 'change' : 'changes'}
     </span>
   {/if}
   {#if showSyncButton}

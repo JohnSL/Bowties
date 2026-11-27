@@ -1,4 +1,13 @@
 <script lang="ts">
+  import {
+    connectorSelectionsView,
+    connectorsGetDocument,
+    connectorsGetError,
+    connectorsGetProfile,
+    layoutSession,
+    bowtieCatalogView,
+  } from '$lib/layout';
+
   /**
    * SegmentView — renders the configuration tree for a selected segment.
    *
@@ -13,8 +22,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
   import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
-  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
+
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
@@ -22,7 +30,7 @@
   import { groupReplicatedChildren } from '$lib/types/nodeTree';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+
   import { evaluateConnectorConstraintsForPath } from '$lib/utils/connectorConstraints';
   import { buildSegmentConnectorSlotSelectors } from '$lib/utils/connectorSlotSelectors';
 
@@ -43,9 +51,9 @@
   let selectedSegment = $derived($configSidebarStore.selectedSegment);
   let configReadNodes = $derived($configReadNodesStore);
 
-  let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
+  let nodeSlotMap = $derived(bowtieCatalogView.effectiveNodeSlotMap);
   let trees = $derived(nodeTreeStore.trees);
-  let connectorRevision = $derived(connectorSelectionsStore.revision);
+  let connectorRevision = $derived(connectorSelectionsView.revision);
 
   let segment = $derived(deriveSegment(selectedSegment, trees));
   let isLoading = $derived(selectedSegment ? nodeTreeStore.isNodeLoading(selectedSegment.nodeId) : false);
@@ -58,7 +66,7 @@
       return null;
     }
 
-    return connectorSelectionsStore.getProfile(selectedSegment.nodeId) ?? selectedTree?.connectorProfile ?? null;
+    return connectorsGetProfile(selectedSegment.nodeId) ?? selectedTree?.connectorProfile ?? null;
   });
   let connectorDocument = $derived.by(() => {
     connectorRevision;
@@ -66,7 +74,7 @@
       return null;
     }
 
-    return connectorSelectionsStore.getDocument(selectedSegment.nodeId);
+    return connectorsGetDocument(selectedSegment.nodeId);
   });
   let connectorError = $derived.by(() => {
     connectorRevision;
@@ -74,7 +82,7 @@
       return null;
     }
 
-    return connectorSelectionsStore.getError(selectedSegment.nodeId)
+    return connectorsGetError(selectedSegment.nodeId)
       ?? selectedTree?.connectorProfileWarning
       ?? null;
   });
@@ -94,7 +102,7 @@
   });
   let connectorControlsEnabled = $derived(
     selectedSegment
-      ? layoutStore.hasLayoutFile || configReadNodes.has(toCanonicalNodeKey(selectedSegment.nodeId))
+      ? layoutSession.hasLayoutFile || configReadNodes.has(toCanonicalNodeKey(selectedSegment.nodeId))
       : false,
   );
   let hasSelectedConnectorDaughterboard = $derived(
@@ -104,9 +112,9 @@
   );
   let showConnectorSessionOnlyHint = $derived(
     hasSelectedConnectorDaughterboard &&
-    !layoutStore.hasLayoutFile &&
-    !layoutStore.isOfflineMode &&
-    layoutStore.isConnected,
+    !layoutSession.hasLayoutFile &&
+    !layoutSession.isOfflineMode &&
+    layoutSession.isConnected,
   );
 
   $effect(() => {

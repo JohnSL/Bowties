@@ -147,7 +147,8 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
 }));
 
-vi.mock('$lib/layout', () => ({
+vi.mock('$lib/layout', async (importOriginal) => ({
+  ...await importOriginal<typeof import('$lib/layout')>(),
   effectiveNodeStore: effectiveNodeRef,
 }));
 

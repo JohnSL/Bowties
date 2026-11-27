@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { channelsStore } from '$lib/stores/channels.svelte';
-  import { eventStateStore } from '$lib/stores/eventState.svelte';
+  import { channelsRenameChannel, channelsView } from '$lib/layout';
+
+
+import { eventStateStore } from '$lib/stores/eventState.svelte';
   import {
     deriveChannelState,
     roleForChannelState,
@@ -50,7 +52,7 @@
     const states = new Map<string, ChannelState>();
     if (!resolvedEventIds) return states;
     const events = eventStateStore.events;
-    for (const ch of channelsStore.channels) {
+    for (const ch of channelsView.channels) {
       const ids = resolvedEventIds.get(ch.id);
       if (!ids) continue;
       const role = roleForChannelState(ch.role);
@@ -62,7 +64,7 @@
   });
 
   function handleRename(id: string, newName: string) {
-    channelsStore.renameChannel(id, newName);
+    channelsRenameChannel(id, newName);
   }
 
   function formatConnectorLabel(connectorId: string): string {
@@ -91,7 +93,7 @@
 
 <section class="channels-panel" data-testid="channels-panel">
   <h3 class="section-heading">Channels</h3>
-  {#if channelsStore.isEmpty}
+  {#if channelsView.isEmpty}
     <div class="empty-state" data-testid="channels-empty-state">
       <p class="empty-title">No channels yet</p>
       <p class="empty-hint">Select a daughter board in the Config tab to create channels.</p>
@@ -110,7 +112,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each [...channelsStore.groupedByHardware.entries()] as [groupKey, channels] (groupKey)}
+          {#each [...channelsView.groupedByHardware.entries()] as [groupKey, channels] (groupKey)}
             {@const sample = channels[0]}
             {@const nk = groupNodeKey(sample)}
             <tr class="group-header">

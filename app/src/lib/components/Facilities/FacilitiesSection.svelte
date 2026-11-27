@@ -1,6 +1,13 @@
 <script lang="ts">
+  import {
+    facilitiesAddFacility,
+    facilitiesRenameFacility,
+    facilitiesView,
+    channelsView,
+  } from '$lib/layout';
+
   import { untrack } from 'svelte';
-  import { facilitiesStore } from '$lib/stores/facilities.svelte';
+
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -11,10 +18,10 @@
   import BlockSignalsEditor from '$lib/components/BlockSignals/BlockSignalsEditor.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import { blockSignalsEditorStore } from '$lib/stores/blockSignalsEditor.svelte';
-  import { channelsStore } from '$lib/stores/channels.svelte';
+
   import { eventStateStore } from '$lib/stores/eventState.svelte';
   import { removalConfirmationGroups } from '$lib/utils/facilityRemovalText';
-import type { FacilityRemovalClaim } from '$lib/api/facilities';
+  import type { FacilityRemovalClaim } from '$lib/api/facilities';
   import { issueText } from '$lib/components/BlockSignals/wiringText';
   import { blockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
   import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
@@ -48,7 +55,7 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
     busy?: boolean;
   } | null>(null);
   const removalFacility = $derived(
-    removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
+    removal ? facilitiesView.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
   );
   const removalGroups = $derived(
     removalConfirmationGroups(removal?.claims ?? [], {
@@ -94,12 +101,12 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
 
   // Live occupancy of each detected block, from the same events as the Channels panel.
   const blockOccupancy = $derived(
-    blockOccupancyMap(channelsStore.channels, resolvedEventIds, eventStateStore.events),
+    blockOccupancyMap(channelsView.channels, resolvedEventIds, eventStateStore.events),
   );
   // Saved Automatic Block Signals facilities draw their track diagram from a backend preview;
   // the orchestrator refetches only the facilities whose saved record changed.
   $effect(() => {
-    const facilities = facilitiesStore.facilities;
+    const facilities = facilitiesView.facilities;
     // sync reads and writes the diagram store; only a facilities change should re-run it.
     untrack(() => void facilityDiagramOrchestrator.sync(facilities));
   });
@@ -152,14 +159,14 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
       showAddDialog = false;
       return;
     }
-    facilitiesStore.addFacility(template, name);
+    facilitiesAddFacility(template, name);
     showAddDialog = false;
   }
   function handleAddCancel() {
     showAddDialog = false;
   }
   function handleRename(facilityId: string, newName: string) {
-    facilitiesStore.renameFacility(facilityId, newName);
+    facilitiesRenameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
     void startRemoval(facilityId);
@@ -180,14 +187,14 @@ import type { FacilityRemovalClaim } from '$lib/api/facilities';
     </button>
   </header>
 
-  {#if facilitiesStore.isEmpty}
+  {#if facilitiesView.isEmpty}
     <div class="empty-state" data-testid="facilities-empty-state">
       <p class="empty-title">No facilities yet</p>
       <p class="empty-hint">Click <strong>Add facility</strong> to scaffold a Block Indicator.</p>
     </div>
   {:else}
     <ul class="facility-list">
-      {#each facilitiesStore.facilities as facility (facility.facilityId)}
+      {#each facilitiesView.facilities as facility (facility.facilityId)}
         <li>
           {#if facility.templateId === PANEL_TEMPLATE_ID}
             <PanelCard {facility} {resolvedEventIds} onEdit={panelEditorActions.startPanelEdit} onRemove={handleDelete} />

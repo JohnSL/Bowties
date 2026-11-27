@@ -271,11 +271,11 @@ Unknown is not a pass.
 
 | ADR | Invariant | Status | Evidence |
 |---|---|---|---|
-| 0004 | `$lib/layout` is the only import surface for components and routes | Drift | `+page.svelte:30-32,86`; `BowtieCatalogPanel.svelte:10-14`; `TreeLeafRow.svelte:18-24`; others in F8 |
-| 0004 | Write entry points re-exported by the facade | OK | `layout/index.ts:183-205` |
+| 0004 | `$lib/layout` is the only import surface for components and routes | OK (S6) | `facadeBoundary.test.ts` guards all eight edit stores |
+| 0004 | Write entry points re-exported by the facade | OK | `layout/index.ts` named commands + `discardLayoutEdits` (S6) |
 | 0011 | Dirty breakdown includes every participant | OK | `effectiveNodeStore.svelte.ts:199,224,245` |
 | 0011 | Participant dispatch through the registry | OK | `layoutLifecycleOrchestrator.ts:79`; `collectSaveDeltas.ts:37` |
-| 0011 | Consumers use only the aggregate dirty flag | Drift | `+page.svelte:200-201` |
+| 0011 | Consumers use only the aggregate dirty flag | OK (S6) | `+page.svelte` reads `effectiveNodeStore.isDirty` / `dirtyBreakdown` only |
 | 0012 | Store contract: isDirty, discard, hydrateBaseline, collectDeltas | OK | `facilities.svelte.ts:99,163,173,185` |
 | 0012 | Saves go through the save orchestrator only | Unknown | `+page.svelte:586,703` not confirmed |
 | 0012 | No-op edits suppressed | Unknown | not checked |

@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { catalogGetDisplayName } from '$lib/layout';
+
   import type { CardField } from '$lib/stores/configSidebar';
   import type { BowtieCard } from '$lib/api/tauri';
   import { createEventDispatcher } from 'svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
-  export let field: CardField;
+export let field: CardField;
   /** Raw event ID bytes (8 bytes); null if not yet read */
   export let bytes: number[] | null = null;
   /** True while a single-field refresh is in progress */
@@ -72,8 +73,8 @@
         class="used-in-link"
         on:click={handleNavigateToBowties}
         title="View bowtie for event {usedIn.event_id_hex}"
-        aria-label="View bowtie connection for {bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}"
-      >{bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}</button>
+        aria-label="View bowtie connection for {catalogGetDisplayName(usedIn.event_id_hex)}"
+      >{catalogGetDisplayName(usedIn.event_id_hex)}</button>
     </div>
   {/if}
 </div>

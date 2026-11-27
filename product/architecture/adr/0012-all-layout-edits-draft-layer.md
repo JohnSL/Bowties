@@ -534,3 +534,24 @@ Block Indicator composition/teardown, its IPC/API and slot pickers are retired.
 Panel/ABS staging and removal retain the shared transaction; hardware-channel
 cascade detaches membership only and never deletes old bowtie names or resets
 their event connections. Manual bowtie editing is unchanged.
+
+## 2026-11-26 extension: Discard participant registry
+
+Spec 021 S6 moved toolbar Discard from `SaveControls` into `discardLayoutEdits()`
+(`app/src/lib/orchestration/layoutDiscardOrchestrator.ts`), exported through
+`$lib/layout`. A typed `LayoutEditParticipant { dirtyBucket, discard() }` registry
+(`layoutEditParticipants.ts`) lists the edit layers with a baseline-relative
+discard. It is distinct from `LayoutScopedParticipant`, whose members include
+reset-only, non-editing participants. The orchestrator keeps the heterogeneous
+phases explicit and in the historical order: pending-change revert first, layout
+restore before connector rehydration, backend `clearLayoutDrafts()` last.
+
+Every `DirtyBreakdown` bucket must be served by a participant, the pending-revert
+phase, or a reasoned exemption; `layoutEditParticipants.test.ts` fails otherwise.
+Known gap: manifest node membership (`unsavedNewNodes`, `unsavedRemovedNodes` —
+placeholder board add/delete) has no saved baseline, so Discard does not undo it.
+This does not yet meet the draft contract above; Spec 021 S7 adds a dedicated
+layout-membership participant that projects into `nodeRoster`.
+
+Invariant: adding an edit-bearing store requires a `layoutEditParticipants` entry
+(or a reasoned exemption) in the same slice as its `dirtyBreakdown` bucket.

@@ -12,17 +12,21 @@
 -->
 
 <script lang="ts">
+  import {
+    recordRoleClassification,
+    resolveNodeName,
+    effectiveLayoutStore,
+    makeValueResolver,
+    buildElementSelection,
+  } from '$lib/layout';
+
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  // ADR-0004 / S2c: read bowtie preview through the layout facade rather than
-  // the legacy `editableBowtiePreviewStore` export directly.
-  // `effectiveLayoutStore` is already imported above from `$lib/layout`.
-  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
-  import { resolveNodeName, effectiveLayoutStore, makeValueResolver, buildElementSelection } from '$lib/layout';
+
   import {
     type SegmentNode,
     type ConfigNode,
@@ -143,7 +147,7 @@
     if ((effectiveRole === 'Ambiguous' || effectiveRole === null) &&
         (roleFilter === 'Producer' || roleFilter === 'Consumer')) {
       const key = `${nodeId}:${leaf.path.join('/')}`;
-      bowtieMetadataStore.classifyRole(key, roleFilter);
+      recordRoleClassification(key, roleFilter);
       doSelect(leaf, nodeId);
       return;
     }
@@ -167,7 +171,7 @@
 
     // Persist the classification
     const key = `${nodeId}:${leaf.path.join('/')}`;
-    bowtieMetadataStore.classifyRole(key, role);
+    recordRoleClassification(key, role);
 
     // Forward the selection
     doSelect(leaf, nodeId);

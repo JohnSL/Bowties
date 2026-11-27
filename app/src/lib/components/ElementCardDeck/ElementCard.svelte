@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { bowtieCatalogView } from '$lib/layout';
+
   import type { CardData, CardElementTree, CardField, CardSubGroup } from '$lib/stores/configSidebar';
   import FieldRow from './FieldRow.svelte';
   import EventSlotRow from './EventSlotRow.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
-  export let card: CardData;
+export let card: CardData;
   export let nodeId: string;
 
   // Local expansion state — starts expanded when loading or error is already set
@@ -23,7 +24,7 @@
   $: if (localLoading || localError) localExpanded = true;
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard (FR-008, SC-005)
-  $: nodeSlotMap = bowtieCatalogStore.effectiveNodeSlotMap;
+  $: nodeSlotMap = bowtieCatalogView.effectiveNodeSlotMap;
 
   async function handleToggle() {
     localExpanded = !localExpanded;

@@ -1,4 +1,35 @@
 <script lang="ts">
+  import {
+    pendingChangesView,
+    pendingRecordDraftsToBackend,
+    pendingReloadFromBackend,
+    connectorsGetDocument,
+    connectorsGetProfile,
+    connectorsGetWarnings,
+    connectorsHydrateBaseline,
+    connectorsHydrateFromLayout,
+    connectorsLoadNode,
+    facilitiesAcknowledgeMigrationNotice,
+    facilitiesLoadFacilities,
+    facilitiesView,
+    channelsLoadChannels,
+    channelsView,
+    configClearAllDrafts,
+    configPruneResolvedDraftsForNode,
+    metadataClearAll,
+    layoutHydrateFromBackend,
+    layoutMarkClean,
+    layoutSession,
+    layoutSetActiveContext,
+    layoutSetConnected,
+    catalogSetCatalog,
+    catalogStartListening,
+    type DirtyBreakdown,
+    effectiveNodeStore,
+    resolveNodeName,
+    resolveNodeParts,
+  } from '$lib/layout';
+
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -27,13 +58,9 @@
   import { toast } from '@zerodevx/svelte-toast';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import type { ReadProgressState } from '$lib/api/types';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
-  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-  import { channelsStore } from '$lib/stores/channels.svelte';
+
   import { collectAllSaveDeltas } from '$lib/layout/collectSaveDeltas';
-  import { facilitiesStore } from '$lib/stores/facilities.svelte';
+
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { resolvePillSelectionsForPath } from '$lib/types/nodeTree';
@@ -54,7 +81,7 @@
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
-   import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
@@ -82,8 +109,8 @@
   import ChannelRemovalDialog from '$lib/components/ChannelRemovalDialog.svelte';
   import DeletePlaceholderDialog from '$lib/components/DeletePlaceholderDialog.svelte';
   import LayoutLoadingDialog from '$lib/components/LayoutLoadingDialog.svelte';
-  import type { DirtyBreakdown } from '$lib/layout';
-  import { configChangesStore } from '$lib/stores/configChanges.svelte';
+
+
   import {
     bootstrapStartupLifecycle,
     SyncSessionOrchestrator,
@@ -99,7 +126,7 @@
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes, normalizeNodeId } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
-  import { effectiveNodeStore, resolveNodeName, resolveNodeParts } from '$lib/layout';
+
   import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
@@ -186,18 +213,18 @@
   }
 
   function canCloseLayoutAction(): boolean {
-    return !!layoutStore.activeContext;
+    return !!layoutSession.activeContext;
   }
 
   function canSaveLayoutAction(): boolean {
     const busy = isMenuBusy();
-    const layoutLoaded = layoutStore.isLoaded;
-    const layoutDirty = layoutStore.isDirty;
-    const metaDirty = bowtieMetadataStore.isDirty;
-    const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
+    const layoutLoaded = layoutSession.isLoaded;
+    const layoutDirty = (effectiveNodeStore.dirtyBreakdown.layoutStruct > 0);
+    const metaDirty = (effectiveNodeStore.dirtyBreakdown.metadata > 0);
+    const offlineActive = !!layoutSession.activeContext && layoutSession.hasLayoutFile;
     // ADR-0011: `effectiveNodeStore.isDirty` is the aggregate "any in-memory
     // change" signal (LayoutFile struct + drafts + metadata + offline +
-    // unsaved-new). `layoutStore.isDirty` now means struct edits only.
+    // unsaved-new). `(effectiveNodeStore.dirtyBreakdown.layoutStruct > 0)` now means struct edits only.
     const hasInMemoryEdits = effectiveNodeStore.isDirty;
     return !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
   }
@@ -239,18 +266,18 @@
 
   // Both inventories come from the canonical backend aggregate.
   $effect(() => {
-    if (!layoutStore.activeContext) return;
+    if (!layoutSession.activeContext) return;
     void (async () => {
       await Promise.all([
-        channelsStore.loadChannels(),
-        facilitiesStore.loadFacilities(),
+        channelsLoadChannels(),
+        facilitiesLoadFacilities(),
       ]);
       facilityCascadeOrchestrator.reconcileDanglingChannelRefsOnLoad();
     })();
   });
 
   $effect(() => {
-    const migration = facilitiesStore.migrationNotice;
+    const migration = facilitiesView.migrationNotice;
     if (!migration) return;
     const indicators = migration.indicators === 1 ? 'Block Indicator' : 'Block Indicators';
     const panels = migration.panels === 1 ? 'Panel' : 'Panels';
@@ -262,14 +289,14 @@
         theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
       });
     }
-    facilitiesStore.acknowledgeMigrationNotice();
+    facilitiesAcknowledgeMigrationNotice();
   });
 
   // Spec 018 / S6 (D3): mount the hardware-channel cascade orchestrator once
   // per open layout. The orchestrator itself is idempotent; the
   // `layoutLifecycleOrchestrator.resetForNewLayout()` path stops it on close.
   $effect(() => {
-    if (layoutStore.activeContext) {
+    if (layoutSession.activeContext) {
       facilityCascadeOrchestrator.startCascade();
     }
   });
@@ -294,8 +321,8 @@
   // Spec 018 / S2 (ADR-0013): the event mapping is sourced from each
   // channel's style via the style registry; no per-call mapping argument.
   $effect(() => {
-    const channels = channelsStore.channels;
-    const connected = layoutStore.isConnected;
+    const channels = channelsView.channels;
+    const connected = layoutSession.isConnected;
     const liveCount = nodeRoster.liveEntries.length;
     const treesCount = nodeTreeStore.trees.size;
     if (connected && channels.length > 0 && (liveCount > 0 || treesCount > 0)) {
@@ -350,7 +377,7 @@
   });
 
   // Connection state
-  // `connected` is owned by `layoutStore` (read via `layoutStore.isConnected`)
+  // `connected` is owned by `layoutStore` (read via `layoutSession.isConnected`)
   // and the connection label is owned by `syncSessionOrchestrator` (S3).
   // `errorMessage` is the page-wide error banner, written by several workflows.
   let errorMessage = $state("");
@@ -377,7 +404,7 @@
   // per-node persistability projection and the aggregate "any in-memory
   // change" signal. Callers read `effectiveNodeStore.isDirty` /
   // `.unsavedInMemoryNodeIds` directly; nothing mirrors back into
-  // `layoutStore`. `layoutStore.isDirty` now means LayoutFile-struct edits
+  // `layoutStore`. `(effectiveNodeStore.dirtyBreakdown.layoutStruct > 0)` now means LayoutFile-struct edits
   // only — its proper domain.
 
   // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
@@ -387,9 +414,9 @@
   const syncSessionOrchestrator = new SyncSessionOrchestrator({
     disconnectLcc: () => invoke('disconnect_lcc'),
     probeForNodes,
-    hasLayoutFile: () => layoutStore.hasLayoutFile,
+    hasLayoutFile: () => layoutSession.hasLayoutFile,
     hasSnapshots: () => currentLayoutSnapshots.length > 0,
-    setLayoutConnected: (value) => { layoutStore.setConnected(value); },
+    setLayoutConnected: (value) => { layoutSetConnected(value); },
     resetFreshLiveSessionState: () => { resetFreshLiveSessionState(); },
     rehydrateOffline: async () => {
       nodeTreeStore.reset();
@@ -420,7 +447,7 @@
 
 
   let activeLayoutLabel = $derived.by(() => {
-    const ctx = layoutStore.activeContext;
+    const ctx = layoutSession.activeContext;
     if (!ctx) return null;
     return normalizeLayoutTitle(ctx.layoutId) ?? normalizeLayoutTitle(ctx.rootPath);
   });
@@ -521,7 +548,7 @@
   async function runOpenLayoutByPath(path: string, name?: string): Promise<void> {
     errorDialog = null;
     try {
-      if (layoutStore.isConnected) {
+      if (layoutSession.isConnected) {
         await disconnectBeforeLayoutSwitch();
       }
       await openLayoutFromRegistry({
@@ -535,7 +562,7 @@
             configSidebarStore.reset();
           },
           hydrateConnectorSelections: (layout) => {
-            connectorSelectionsStore.hydrateFromLayout(layout);
+            connectorsHydrateFromLayout(layout);
           },
           onOpened: () => {
             showConnectionDialog = false;
@@ -593,7 +620,7 @@
               configSidebarStore.reset();
             },
             hydrateConnectorSelections: (layout) => {
-              connectorSelectionsStore.hydrateFromLayout(layout);
+              connectorsHydrateFromLayout(layout);
             },
             onOpened: () => {
               showConnectionDialog = false;
@@ -631,8 +658,8 @@
 
   async function saveCurrentCaptureToFile(forceSaveAs = false): Promise<boolean> {
     try {
-      let targetPath = layoutStore.activeContext?.mode === 'offline_file'
-        ? layoutStore.activeContext.rootPath
+      let targetPath = layoutSession.activeContext?.mode === 'offline_file'
+        ? layoutSession.activeContext.rootPath
         : '';
       if (forceSaveAs || !targetPath) {
         const selected = await open({
@@ -654,23 +681,23 @@
 
       const sharedOrchestratorArgs = {
         clearMetadata: () => {
-          bowtieMetadataStore.clearAll();
-          connectorSelectionsStore.hydrateBaseline();
+          metadataClearAll();
+          connectorsHydrateBaseline();
         },
-        markClean: () => layoutStore.markClean(),
+        markClean: () => layoutMarkClean(),
         hydrateLayout: (layout: import('$lib/types/bowtie').LayoutFile) =>
-          layoutStore.hydrateFromBackend(layout),
-        recordPending: () => pendingChangesStore.recordDraftsToBackend(),
-        setActiveContext: (ctx: import('$lib/stores/layout.svelte').ActiveLayoutContext) =>
-          layoutStore.setActiveContext(ctx),
+          layoutHydrateFromBackend(layout),
+        recordPending: () => pendingRecordDraftsToBackend(),
+        setActiveContext: (ctx: import('$lib/layout').ActiveLayoutContext) =>
+          layoutSetActiveContext(ctx),
         updatePartialCaptureNodes: (warnings: string[]) => {
           partialCaptureNodesStore.replace(warnings);
         },
-        getPendingChangeCount: () => pendingChangesStore.pendingCount,
+        getPendingChangeCount: () => pendingChangesView.pendingCount,
         // ADR-0004 (S2c): drop config drafts that are now persisted on disk so
         // the effective read model never observes a stale draft after the
         // catalog has been rebuilt from the saved layout.
-        clearPersistedDrafts: () => configChangesStore.clearAllDrafts(),
+        clearPersistedDrafts: () => configClearAllDrafts(),
         path: targetPath,
         deltas,
         // S8.11: unified set of in-memory node keys (real + placeholder)
@@ -687,14 +714,14 @@
         // The backend rewrites pending changes during the save (applied rows
         // removed, refused / failed / conflict rows with a reason), so the
         // frontend mirror is re-pulled before the UI settles.
-        reloadPendingChanges: async () => { await pendingChangesStore.reloadFromBackend(); },
+        reloadPendingChanges: async () => { await pendingReloadFromBackend(); },
         // The write committed values in the backend trees; reload them before
         // the drafts clear so the fields keep showing the written values.
         reloadNodeTrees: async (nodeIds: string[]) => {
           await Promise.all(nodeIds.map((id) => nodeTreeStore.refreshTree(id)));
         },
       };
-      const orchestratorArgs: SaveLayoutOrchestratedArgs = layoutStore.isConnected
+      const orchestratorArgs: SaveLayoutOrchestratedArgs = layoutSession.isConnected
         ? {
             ...sharedOrchestratorArgs,
             saveWithBusWrites: (p, d, ids) => saveLayoutWithBusWrites(p, d, ids, true),
@@ -703,7 +730,7 @@
             ...sharedOrchestratorArgs,
             saveFile: (p, d) => saveLayoutDirectory(p, true, d),
             rebuildCatalog: buildBowtieCatalog,
-            setCatalog: (catalog) => bowtieCatalogStore.setCatalog(catalog),
+            setCatalog: (catalog) => catalogSetCatalog(catalog),
           };
       // S3: drive the save-progress modal. For the online path the backend
       // emits `save-progress` events that overwrite the phase as they arrive;
@@ -715,8 +742,8 @@
         // Post-save re-hydration. Every channel / facility edit rode through
         // `saveLayoutDirectory` as a `LayoutEditDelta`; re-read authoritative
         // state so the baseline matches disk and pending buckets clear.
-        await channelsStore.loadChannels();
-        await facilitiesStore.loadFacilities();
+        await channelsLoadChannels();
+        await facilitiesLoadFacilities();
 
         // Bug 2b fix: cache the snapshots from this save so the disconnect
         // transition matrix sees `hasSnapshots: true` and takes the
@@ -741,7 +768,7 @@
 
   async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
     await layoutLifecycleOrchestrator.resetForNewLayout({
-      connected: layoutStore.isConnected,
+      connected: layoutSession.isConnected,
       reprobeLiveNodes,
       probeForNodes,
       afterReset: () => {
@@ -758,10 +785,10 @@
 
   async function clearActiveLayout() {
     await layoutLifecycleOrchestrator.closeLayout({
-      activeMode: layoutStore.activeContext?.mode,
+      activeMode: layoutSession.activeContext?.mode,
       closeLayoutIpc: (decision) => closeLayout(decision),
       clearRecentLayout,
-      connected: layoutStore.isConnected,
+      connected: layoutSession.isConnected,
       disconnectBeforeClose: () => syncSessionOrchestrator.disconnectBeforeLayoutSwitch(),
       probeForNodes,
       afterReset: () => {
@@ -787,8 +814,8 @@
   // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
   // would never match on a mixed network.
   let showConfigCta = $derived(
-    layoutStore.isConnected &&
-    !layoutStore.hasLayoutFile &&
+    layoutSession.isConnected &&
+    !layoutSession.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
     unreadCount > 0 &&
@@ -806,8 +833,8 @@
   // not-yet-captured node across the capture threshold. The pane returns to
   // its normal empty-state once everything is captured.
   let showCaptureRemainingCta = $derived(
-    layoutStore.isConnected &&
-    layoutStore.hasLayoutFile &&
+    layoutSession.isConnected &&
+    layoutSession.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
     unreadCount > 0 &&
@@ -902,7 +929,7 @@
           config?: { name?: string | null; host?: string | null; port?: string | number | null; serialPort?: string | null } | null;
         },
         setLayoutConnected: (value) => {
-          layoutStore.setConnected(value);
+          layoutSetConnected(value);
         },
         setConnectionLabel: (label) => {
           syncSessionOrchestrator.setConnectionLabel(label);
@@ -913,7 +940,7 @@
         // Feature 006: Start bowties store listener so cdi-read-complete is captured
         // regardless of whether the user has visited the Bowties page.
         // Must be awaited so the listener is registered before layout restore work.
-        startBowtieListening: () => bowtieCatalogStore.startListening(),
+        startBowtieListening: () => catalogStartListening(),
         // Spec 009 T015: Auto-reopen the most recent layout file on startup.
         restoreRecentOfflineLayout: () => restoreRecentOfflineLayout({
           getRecentLayout,
@@ -925,7 +952,7 @@
               configSidebarStore.reset();
             },
             hydrateConnectorSelections: (layout) => {
-              connectorSelectionsStore.hydrateFromLayout(layout);
+              connectorsHydrateFromLayout(layout);
             },
             onOpened: () => {
               showConnectionDialog = false;
@@ -952,11 +979,11 @@
         startNodeTreeListening: () => {
           nodeTreeStore.startListening((_nodeId) => {
             // After edit layer refactor: draft reconciliation replaces restamp.
-            configChangesStore.pruneResolvedDraftsForNode(_nodeId);
+            configPruneResolvedDraftsForNode(_nodeId);
             void recomputeConnectorCompatibility(_nodeId);
           });
         },
-        hasLayoutFile: () => layoutStore.hasLayoutFile,
+        hasLayoutFile: () => layoutSession.hasLayoutFile,
         resetFreshLiveSessionState,
         probeForNodes,
       });
@@ -977,7 +1004,7 @@
             breakdown: effectiveNodeStore.dirtyBreakdown,
             proceed: async () => {
               isForceClosing = true;
-              bowtieMetadataStore.clearAll();
+              metadataClearAll();
               await invoke('disconnect_lcc');
               appWindow.close();
             },
@@ -1011,7 +1038,7 @@
       // no backend proxy). In that case we upgrade them with the real bus alias and proceed
       // to registerNode + SNIP/PIP so backend proxies are created for sync.
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-discovered', async (event) => {
-        if (!layoutStore.isConnected) return; // ignore stray events after disconnect
+        if (!layoutSession.isConnected) return; // ignore stray events after disconnect
         const { nodeId, alias } = event.payload;
 
         // Bug 1 fix: pass liveNodes (excludes placeholders) instead of nodes
@@ -1034,14 +1061,14 @@
         nodeRoster.replaceLiveRoster(result.nodes);
         // Inject off-bus saved nodes so the sidebar shows them with ⚠.
         // Idempotent — only adds entries for saved IDs not already present.
-        nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
+        nodeRoster.injectOffBusSavedNodes(layoutSession.activeContext?.layoutNodeIds);
         if (result.skipped) return;
 
         // Reset the discovery settling timer — wait for 1s of silence after the
         // last node-discovered event before triggering sync.
         syncSessionOrchestrator.scheduleAutoSync({
-          hasLayoutFile: layoutStore.hasLayoutFile,
-          pendingCount: pendingChangesStore.pendingCount,
+          hasLayoutFile: layoutSession.hasLayoutFile,
+          pendingCount: pendingChangesView.pendingCount,
           triggerSync: () => maybeTriggerSync(),
         });
       }));
@@ -1049,7 +1076,7 @@
       // D15: When a known node sends InitializationComplete (reboot/factory-reset),
       // re-query its SNIP+PIP so the UI reflects any changed configuration.
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-reinitialized', async (event) => {
-        if (!layoutStore.isConnected) return;
+        if (!layoutSession.isConnected) return;
         const { nodeId, alias } = event.payload;
         console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
         // Bug 1 fix: use liveNodes — same rationale as lcc-node-discovered.
@@ -1078,8 +1105,8 @@
           'Disconnecting will discard unsaved changes. Continue?',
           () => disconnect(),
         ),
-        refresh: () => { if (layoutStore.isConnected) handleRefresh(); },
-        traffic: () => { if (layoutStore.isConnected) openTrafficMonitor(); },
+        refresh: () => { if (layoutSession.isConnected) handleRefresh(); },
+        traffic: () => { if (layoutSession.isConnected) openTrafficMonitor(); },
         viewCdi: () => {
           const state = get(configSidebarStore);
           const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
@@ -1094,7 +1121,7 @@
           const win = getCurrentWebviewWindow();
           promptUnsaved('You have unsaved changes. Exit without saving?', async () => {
             isForceClosing = true;
-            bowtieMetadataStore.clearAll();
+            metadataClearAll();
             await invoke('disconnect_lcc');
             win.close();
           }, 'Exit Without Saving');
@@ -1107,7 +1134,7 @@
         addPlaceholderBoard: () => {
           // FR-017a: only meaningful with an active offline layout — the menu
           // item is already gated, but guard here too for completeness.
-          if (layoutStore.hasLayoutFile) showAddBoardDialog = true;
+          if (layoutSession.hasLayoutFile) showAddBoardDialog = true;
         },
         deletePlaceholderBoard: () => {
           // S8.5 / T11 — gated server-side by the menu enable bit; reassert
@@ -1167,8 +1194,8 @@
    */
   async function maybeTriggerSync() {
     await syncSessionOrchestrator.maybeTriggerSync({
-      hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: pendingChangesStore.pendingCount,
+      hasLayoutFile: layoutSession.hasLayoutFile,
+      pendingCount: pendingChangesView.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1179,7 +1206,7 @@
 
   /** File > Sync to Bus, and every "Review in Sync Panel" button: one entry point. */
   function runSyncToBus() {
-    if (layoutStore.isConnected && layoutStore.hasLayoutFile) void forceSyncPanel();
+    if (layoutSession.isConnected && layoutSession.hasLayoutFile) void forceSyncPanel();
   }
 
   // Components emit a sync-review request; this is the single consumer.
@@ -1192,8 +1219,8 @@
   /** Re-open the sync panel on demand (e.g. from menu or OfflineBanner button). */
   async function forceSyncPanel() {
     await syncSessionOrchestrator.forceSyncPanel({
-      hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: pendingChangesStore.pendingCount,
+      hasLayoutFile: layoutSession.hasLayoutFile,
+      pendingCount: pendingChangesView.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1224,7 +1251,7 @@
       // even if no lcc-node-discovered events arrive (all saved nodes offline).
       // If a node later responds, its lcc-node-discovered handler will overwrite
       // the synthetic entry with a real Connected one.
-      nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
+      nodeRoster.injectOffBusSavedNodes(layoutSession.activeContext?.layoutNodeIds);
     } catch (e) {
       console.error("Probe failed:", e);
     }
@@ -1253,7 +1280,7 @@
 
         nodeRoster.replaceLiveRoster(refreshed.nodes);
         // Inject off-bus saved nodes after cull so they reappear with ⚠.
-        nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
+        nodeRoster.injectOffBusSavedNodes(layoutSession.activeContext?.layoutNodeIds);
         // Only clean up state for nodes that actually left — preserve config read
         // status and CDI data for nodes that are still present.
         removeNodesConfigRead(refreshed.removedNodeIds);
@@ -1324,7 +1351,7 @@
   }
 
   $effect(() => {
-    const conn = layoutStore.isConnected;
+    const conn = layoutSession.isConnected;
     const busy = probing || configAcquisition.readingRemaining;
     const store = $configSidebarStore;
 
@@ -1334,7 +1361,7 @@
     // Build a reactive snapshot for the pure menu-enable policy. Reading each
     // store value here keeps the effect tracking them; `computeMenuEnableState`
     // owns the rules (ADR-0011: `effectiveNodeStore.isDirty` is the aggregate
-    // edit facade; `layoutStore.isDirty` is struct-only).
+    // edit facade; `(effectiveNodeStore.dirtyBreakdown.layoutStruct > 0)` is struct-only).
     const menu = computeMenuEnableState({
       connected: conn,
       busy,
@@ -1343,13 +1370,13 @@
       selectedNodeHasCdi: !!selectedNodeId && cdiCacheStore.has(selectedNodeId),
       selectedIsPlaceholder: !!selectedNodeId && isPlaceholderInput(selectedNodeId),
       selectedInRoster: !!selectedNodeId && nodeRoster.has(selectedNodeId),
-      layoutLoaded: layoutStore.isLoaded,
-      layoutDirty: layoutStore.isDirty,
-      metaDirty: bowtieMetadataStore.isDirty,
-      hasActiveLayout: !!layoutStore.activeContext,
-      hasLayoutFile: layoutStore.hasLayoutFile,
+      layoutLoaded: layoutSession.isLoaded,
+      layoutDirty: (effectiveNodeStore.dirtyBreakdown.layoutStruct > 0),
+      metaDirty: (effectiveNodeStore.dirtyBreakdown.metadata > 0),
+      hasActiveLayout: !!layoutSession.activeContext,
+      hasLayoutFile: layoutSession.hasLayoutFile,
       hasInMemoryEdits: effectiveNodeStore.isDirty,
-      pendingSyncCount: pendingChangesStore.pendingCount,
+      pendingSyncCount: pendingChangesView.pendingCount,
     });
 
     syncMenuState(
@@ -1382,15 +1409,15 @@
 
     const selectedConnectorProfile = selectedTree.connectorProfile ?? null;
 
-    const cachedProfile = connectorSelectionsStore.getProfile(selectedNodeId);
-    const cachedDocument = connectorSelectionsStore.getDocument(selectedNodeId);
+    const cachedProfile = connectorsGetProfile(selectedNodeId);
+    const cachedDocument = connectorsGetDocument(selectedNodeId);
     if (!selectedConnectorProfile) {
       if (
         cachedProfile
         || cachedDocument
-        || connectorSelectionsStore.getWarnings(selectedNodeId).length > 0
+        || connectorsGetWarnings(selectedNodeId).length > 0
       ) {
-        void connectorSelectionsStore.loadNode(selectedNodeId, null);
+        void connectorsLoadNode(selectedNodeId, null);
       }
       return;
     }
@@ -1402,7 +1429,7 @@
       return;
     }
 
-    void connectorSelectionsStore.loadNode(selectedNodeId, selectedConnectorProfile);
+    void connectorsLoadNode(selectedNodeId, selectedConnectorProfile);
   });
 
   async function handleConnectorSelectionChange(detail: {
@@ -1412,7 +1439,7 @@
   }): Promise<void> {
     // Spec 015 / S5: check if this slot has existing channels that would be removed
     const normalizedNodeId = normalizeNodeId(detail.nodeId);
-    const affectedChannels = channelsStore.channels.filter((ch) => {
+    const affectedChannels = channelsView.channels.filter((ch) => {
       if (ch.binding.kind !== 'connectorInput') return false;
       return (
         normalizeNodeId(ch.binding.nodeKey) === normalizedNodeId &&
@@ -1472,7 +1499,7 @@
   let pickerActive = $derived(
     !startupBootstrapPending
     && !$layoutOpenInProgress
-    && !layoutStore.activeContext
+    && !layoutSession.activeContext
   );
 
   function slotChannelUsedBy(channelId: string): ReadonlyArray<{ facilityName: string; slotLabel: string }> {
@@ -1498,7 +1525,7 @@
   {:else}
 
   <!-- ═══ TOOLBAR (connected only) ═══ -->
-  {#if layoutStore.isConnected || layoutStore.isOfflineMode}
+  {#if layoutSession.isConnected || layoutSession.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
         <!-- Tab strip: Config | Bowties | Railroad -->
@@ -1535,7 +1562,7 @@
             title="Railroad information channels"
           >Railroad</button>
         </div>
-        {#if layoutStore.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
+        {#if layoutSession.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
@@ -1550,7 +1577,7 @@
         <SaveControls toolbar={true} bind:this={saveControlsRef} onSave={() => saveCurrentCaptureToFile(false)} onSaveAs={() => saveCurrentCaptureToFile(true)} />
       </div>
       <div class="toolbar-right">
-        {#if layoutStore.isConnected}
+        {#if layoutSession.isConnected}
           <button
             class="toolbar-status-btn"
             onclick={disconnect}
@@ -1602,11 +1629,11 @@
   {/if}
 
   <!-- ═══ OFFLINE BANNER ═══ -->
-  {#if layoutStore.isOfflineMode}
+  {#if layoutSession.isOfflineMode}
     <OfflineBanner
-      capturedAt={layoutStore.activeContext?.capturedAt ?? null}
+      capturedAt={layoutSession.activeContext?.capturedAt ?? null}
       layoutId={activeLayoutLabel}
-      isConnected={layoutStore.isConnected}
+      isConnected={layoutSession.isConnected}
       isSyncDismissed={syncPanelStore.isDismissed}
       onsyncrequest={forceSyncPanel}
     />
@@ -1618,7 +1645,7 @@
       <div class="startup-placeholder" aria-live="polite">
         <p>Loading Bowties…</p>
       </div>
-    {:else if !layoutStore.isConnected && !layoutStore.hasLayoutFile && nodes.length === 0}
+    {:else if !layoutSession.isConnected && !layoutSession.hasLayoutFile && nodes.length === 0}
       <div class="connect-area">
         <ConnectionManager on:connected={handleConnected} />
       </div>
@@ -1646,7 +1673,7 @@
       <BowtieCatalogPanel
         highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex}
         onReadConfig={() => configAcquisition.readRemaining()}
-        hasUnreadNodes={layoutStore.isConnected && unreadCount > 0}
+        hasUnreadNodes={layoutSession.isConnected && unreadCount > 0}
         readingConfig={configAcquisition.readingRemaining}
         {unreadCount}
         nodesCount={nodes.length}
@@ -1699,7 +1726,7 @@
               </button>
             </div>
           {:else}
-            {#if layoutStore.hasLayoutFile && selectedNodeIdAny && partialCaptureNodesStore.has(selectedNodeIdAny)}
+            {#if layoutSession.hasLayoutFile && selectedNodeIdAny && partialCaptureNodesStore.has(selectedNodeIdAny)}
               <div class="partial-capture-note">
                 <MissingCaptureBadge text="(Not captured)" />
                 <span>Some values for this node were not captured and remain read-only offline.</span>

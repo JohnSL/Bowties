@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { channelsView } from '$lib/layout';
+
   /**
    * PanelCard — the Railroad-tab card for a Panel facility: name, type chip, derived status
    * and per-board waiting writes (from the effectiveLayoutStore facade), a sub line, and a
@@ -7,8 +9,8 @@
    */
   import type { Facility } from '$lib/api/facilities';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
-  import { channelsStore } from '$lib/stores/channels.svelte';
-  import { eventStateStore } from '$lib/stores/eventState.svelte';
+
+import { eventStateStore } from '$lib/stores/eventState.svelte';
   import { blockOccupancyMap, occupancyOf } from '$lib/components/BlockSignals/occupancy';
   import ChannelStateIndicator from '$lib/components/Railroad/ChannelStateIndicator.svelte';
   import StatusBadge from '$lib/components/Facilities/StatusBadge.svelte';
@@ -24,7 +26,7 @@
   const status = $derived(effectiveLayoutStore.panelStatus(facility.facilityId));
   const entries = $derived(effectiveLayoutStore.panelCardEntries(facility.facilityId));
   const writeOutcome = $derived(effectiveLayoutStore.facilityWriteOutcome(facility.facilityId));
-  const occupancy = $derived(blockOccupancyMap(channelsStore.channels, resolvedEventIds, eventStateStore.events));
+  const occupancy = $derived(blockOccupancyMap(channelsView.channels, resolvedEventIds, eventStateStore.events));
 
   const boards = $derived([...new Set(entries.flatMap((entry) => (entry.lamp ? [entry.lamp.boardName] : [])))]);
   const count = $derived(entries.length);

@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { configDraftEntries } from '$lib/layout';
+
   import ConfigSidebar from '$lib/components/ConfigSidebar/ConfigSidebar.svelte';
   import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeInfoStore, updateNodeInfo } from '$lib/stores/nodeInfo';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { configChangesStore } from '$lib/stores/configChanges.svelte';
-  import { listen } from '@tauri-apps/api/event';
+
+import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
@@ -16,7 +18,7 @@
 
   // FR-026: Warn before navigating away from the page when there are unsaved edits.
   beforeNavigate(({ cancel }) => {
-    const hasModified = configChangesStore.draftEntries().length > 0;
+    const hasModified = configDraftEntries().length > 0;
     if (hasModified) {
       const ok = window.confirm(
         'You have unsaved configuration changes.\n\nIf you leave this page, your changes will be lost.\n\nDo you want to leave?'

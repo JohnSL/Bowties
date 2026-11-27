@@ -58,5 +58,16 @@ Structured testable rules for the `/design` audit. Each invariant resolves to OK
 - `$lib/layout` is the only layout-state import surface for components and routes. The four edit-layer stores (`bowtieMetadataStore`, `configChangesStore`, `bowtieCatalogStore`, `layoutStore`) are not imported by files under `app/src/lib/components/**` or `app/src/routes/**`. Audit: grep imports of those store paths from those directories.
 - All display sites for bowtie cards, role filters, slot occupancy, and effective values read through `effectiveLayoutStore`'s composed projections (`effectiveBowties`, `effectiveRole`, `effectiveValue`, `slotsByRole`, `isSlotFree`) — never directly from raw stores. The fast/slow path branch in `EditableBowtiePreviewStore` does not return; any new equivalent is a regression.
 - Write entry points (including draft-recording commands like "record a bowtie deletion", "record a role classification", "record a draft value") are re-exported through the facade. Components do not call edit-layer store mutation methods directly.
+- (2026-11-26) The import boundary covers all eight edit-bearing stores — the four above plus `channelsStore`, `facilitiesStore`, `connectorSelectionsStore` and `pendingChangesStore` — including type-only, dynamic and relative-path imports from production files under `app/src/routes/**` and `app/src/lib/components/**`. Audit: `app/src/lib/layout/facadeBoundary.test.ts` (test files and `*TestSupport.ts` seeding helpers are exempt).
+- (2026-11-26) Facade reads are getter-only domain projections; facade writes are named commands. `$lib/layout` never re-exports a raw edit store. Audit: grep `index.ts` for `export { …Store }` of an edit store.
 
 When extending this ADR, add or amend invariants in this section rather than scattering them across the file.
+
+## 2026-11-26 extension: enforced boundary with read projections and named commands
+
+Spec 021 S6 closed the F8 drift (16 route/component files imported edit stores directly; the route read raw per-store dirty flags). Decisions:
+
+- **Surface shape.** `$lib/layout` exposes getter-only, domain-grouped projections (`layoutSession`, `bowtieCatalogView`, `channelsView`, `facilitiesView`, `connectorSelectionsView`, `pendingChangesView`) and separately named command delegates. Rejected: re-exporting the raw stores — path-only compliance that leaves mutation authority in every consumer.
+- **Enforcement.** A Vitest guard scans production source via `import.meta.glob` raw imports. Rejected: an ESLint `no-restricted-imports` rule — the app has no ESLint setup, so it would add a new lint subsystem to the validation gate.
+- **Scope.** All eight Dirty Aggregation contributors, not only the original four, so no equivalent bypass remains.
+- **Discard.** Toolbar Discard moved out of `SaveControls` into `discardLayoutEdits()` (see ADR-0012 2026-11-26 extension).

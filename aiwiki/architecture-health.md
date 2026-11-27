@@ -2,6 +2,13 @@
 
 Coupling risks, depth assessments, and architecture debt discovered during feature work. This file grows incrementally — add entries as issues are found.
 
+## Layout facade enforced; route lifecycle still passes through thin commands (2026-11-26)
+
+- **Area**: `$lib/layout` facade, routes and components (Spec 021 S6, ADR-0004/0011/0012 extensions).
+- **Resolved**: 16 production consumers no longer import edit stores; `facadeBoundary.test.ts` guards all eight. The route reads only the aggregate dirty signal. Toolbar Discard moved to `discardLayoutEdits()` with a typed participant registry and bucket-coverage test.
+- **Remaining debt**: `+page.svelte` still sequences open/connect/session lifecycle by calling thin facade command delegates (`layoutSetConnected`, `layoutHydrateFromBackend`, `layoutSetActiveContext`, `catalogSetCatalog`, `catalogStartListening`, `channelsLoadChannels`, `facilitiesLoadFacilities`, `configClearAllDrafts`, `pendingRecordDraftsToBackend`). The import boundary holds, but this lifecycle sequencing belongs in orchestrators; each delegate is a candidate to fold into `layoutLifecycleOrchestrator` / `offlineLayoutOrchestrator`. Facade growth is flat per-store commands, so review new commands for a domain-level verb before adding another delegate.
+- **Known gap**: Discard does not undo placeholder board add/delete (`unsavedNewNodes` / `unsavedRemovedNodes` exempt in `layoutEditParticipants.ts`); fix planned as Spec 021 S7.
+
 ## Canonical conversion versus persistence acknowledgement (2026-11-26)
 
 - **Area**: core layout read, Tauri inventory listings, facilities store and dirty aggregation (Spec 021 S5).

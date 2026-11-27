@@ -1,4 +1,12 @@
 <script lang="ts">
+  import {
+    pendingChangesView,
+    connectorSelectionsView,
+    discardLayoutEdits,
+    layoutSession,
+    effectiveNodeStore,
+  } from '$lib/layout';
+
   /**
    * SaveControls — Global Save button and progress display.
    *
@@ -11,17 +19,10 @@
    * Spec: 007-edit-node-config.
    */
   import type { SaveProgress } from '$lib/types/nodeTree';
-  import { clearLayoutDrafts } from '$lib/api/layout';
   import { toast } from '@zerodevx/svelte-toast';
-  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
-  import { effectiveNodeStore } from '$lib/layout';
-  import { channelsStore } from '$lib/stores/channels.svelte';
-  import { facilitiesStore } from '$lib/stores/facilities.svelte';
-  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+
+
   import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
-  import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
 
@@ -61,10 +62,10 @@
 
   let viewState = $derived(deriveSaveControlsViewState({
     breakdown: effectiveNodeStore.dirtyBreakdown,
-    connectorWarningCount: connectorSelectionsStore.totalWarningCount,
-    layoutIsOfflineMode: layoutStore.isOfflineMode,
-    layoutIsConnected: layoutStore.isConnected,
-    offlineDraftRows: pendingChangesStore.draftRows,
+    connectorWarningCount: connectorSelectionsView.totalWarningCount,
+    layoutIsOfflineMode: layoutSession.isOfflineMode,
+    layoutIsConnected: layoutSession.isConnected,
+    offlineDraftRows: pendingChangesView.draftRows,
     saveProgressState: saveProgress.state,
   }));
 
@@ -80,11 +81,6 @@
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
-
-  function rehydrateConnectorSelectionsFromLayout(): void {
-    const layout = layoutStore.layout;
-    connectorSelectionsStore.hydrateFromLayout(layout);
-  }
 
   // ── Save handler ────────────────────────────────────────────────────────────
   //
@@ -106,7 +102,7 @@
       total: totalEdits,
       completed: 0,
       failed: 0,
-      currentFieldLabel: layoutStore.isOfflineMode ? 'Offline layout changes' : 'Saving\u2026',
+      currentFieldLabel: layoutSession.isOfflineMode ? 'Offline layout changes' : 'Saving\u2026',
     };
 
     try {
@@ -143,18 +139,7 @@
   async function handleConfirmDiscard() {
     showDiscardDialog = false;
 
-    // Discard is drafts only (E3b): nothing was written or recorded until Save.
-    await pendingChangesStore.revertAllPending();
-    discardAllConfigDrafts();
-    bowtieMetadataStore.clearAll();
-    connectorSelectionsStore.discard();
-    channelsStore.discard();
-    facilitiesStore.discard();
-    layoutStore.revertToSaved();
-    rehydrateConnectorSelectionsFromLayout();
-    // Spec 018 / S6 bugfix — drop any facility/channel drafts mirrored
-    // into LayoutState so the next compose reads a clean saved-only view.
-    await clearLayoutDrafts();
+    await discardLayoutEdits();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 

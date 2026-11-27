@@ -1,3 +1,10 @@
+import {
+  configChangeLayers,
+  configHasDraftsForNode,
+  resolveNodeName,
+  resolveNodeParts,
+  type NodeDisplayParts,
+} from '$lib/layout';
 import { isWaitingPendingChange } from '$lib/utils/pendingChangeStatus';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { PendingChangeRow } from '$lib/api/sync';
@@ -8,9 +15,9 @@ import {
   type ConfigNode,
   type NodeConfigTree,
 } from '$lib/types/nodeTree';
-import { configChangesStore } from '$lib/stores/configChanges.svelte';
+
 import { editKeyForLeaf } from '$lib/utils/editKey';
-import { resolveNodeName, resolveNodeParts, type NodeDisplayParts } from '$lib/layout';
+
 import { isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
 import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
@@ -112,7 +119,7 @@ export function getNodePendingState(
 
   return {
     hasPendingApply: hasPendingApplyForNode(nodeId, persistedRows),
-    hasPendingEdits: configChangesStore.hasDraftsForNode(nodeId),
+    hasPendingEdits: configHasDraftsForNode(nodeId),
   };
 }
 
@@ -205,7 +212,7 @@ function hasDraftInChildren(nodeId: string, children: ConfigNode[]): boolean {
   for (const child of children) {
     if (isLeaf(child)) {
       const key = editKeyForLeaf(nodeId, child.space, child.address);
-      const layers = configChangesStore.changeLayers(key);
+      const layers = configChangeLayers(key);
       if (layers.some(l => l.type === 'draft')) return true;
       continue;
     }

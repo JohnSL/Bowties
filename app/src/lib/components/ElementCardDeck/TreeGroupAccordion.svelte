@@ -1,4 +1,12 @@
 <script lang="ts">
+  import {
+    pendingHasPersistedConfigChange,
+    configChangeLayers,
+    configOverrideValue,
+    configVisibleValue,
+    bowtieCatalogView,
+  } from '$lib/layout';
+
   /**
    * TreeGroupAccordion — renders a GroupConfigNode from the unified tree.
    *
@@ -22,9 +30,7 @@
   interface PillItem { value: number; label: string; description?: string; }
   import TreeLeafRow from './TreeLeafRow.svelte';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { configChangesStore } from '$lib/stores/configChanges.svelte';
-  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
@@ -75,7 +81,7 @@
   /** Resolve leaf value through draft → offlinePending → baseline layers. */
   function resolveLeafValue(leaf: LeafConfigNode): TreeConfigValue | null {
     const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
-    return configChangesStore.overrideValue(key) ?? leaf.value;
+    return configOverrideValue(key) ?? leaf.value;
   }
 
   // Build pill items from siblings
@@ -97,9 +103,9 @@
     for (const child of children) {
       if (isLeaf(child)) {
         const key = editKeyForLeaf(nId, child.space, child.address);
-        if (configChangesStore.visibleValue(key) !== null) {
+        if (configVisibleValue(key) !== null) {
           // Check if there's actually a draft (not just baseline or offline pending)
-          const layers = configChangesStore.changeLayers(key);
+          const layers = configChangeLayers(key);
           if (layers.length > 0 && layers[0].type === 'draft') return true;
         }
         continue;
@@ -118,7 +124,7 @@
   function hasPendingApplyInChildren(nId: string, children: ConfigNode[]): boolean {
     for (const child of children) {
       if (isLeaf(child)) {
-        if (pendingChangesStore.hasPersistedConfigChange(nId, child.space, offsetFromAddress(child.address))) {
+        if (pendingHasPersistedConfigChange(nId, child.space, offsetFromAddress(child.address))) {
           return true;
         }
         continue;
@@ -173,7 +179,7 @@
   let groupedChildren = $derived(groupReplicatedChildren(activeGroup.children));
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard
-  let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
+  let nodeSlotMap = $derived(bowtieCatalogView.effectiveNodeSlotMap);
 
   /** Get the BowtieCard cross-reference for a leaf's path */
   function getUsedIn(leaf: { path: string[] }) {

@@ -2,7 +2,7 @@
 
 Branch: 021-panel-facility
 Generated: 2026-11-25
-Status: 5/6
+Status: 6/7
 
 ## Architecture
 
@@ -93,7 +93,8 @@ flowchart LR
 | S3 | Blocks step and "lit when" | AFK | S1 | done |
 | S4 | Edit, release and remove | HITL | S1 | done |
 | S5 | Migrate Block Indicators and retire them | HITL | S1 + S2 | done |
-| S6 | Route all layout imports through the facade | REFACTOR | S5 | sketched |
+| S6 | Route all layout imports through the facade | REFACTOR | S5 | done |
+| S7 | Discard undoes placeholder board add and delete | HITL | S6 | sketched |
 
 ### S1: One-board panel, end to end [HITL]
 
@@ -225,7 +226,6 @@ flowchart LR
 **Boundary**: Components → orchestrators → compiler resets and releases → drafts → Save
 **Re-cut after S1**: adds Edit and Remove to `PanelCard` (none in S1), `updatePanelFacility` and `removePanelFacility` on the existing staging transaction (`tx.setPanelRecord` is ready), and `deleteFacility` routing for `panel`. A same-board pin move changes only Lamp Selection on the kept row (no rebind, nothing to reset); resets apply to dropped rows (`direct_lamp_reset_edits` via `facility_claimed_slots`). Release goes through `overlay_releases`, which already refuses claimed rows.
 **Blocked by**: S1
-**Status**: sketched
 
 **Acceptance criteria**:
 - [ ] Moving a lamp from #6 to #12 and saving: #12 follows the block and #6 is reset.
@@ -435,11 +435,51 @@ Necessary narrow surface additions: `signaling/facts.rs` and app `signaling/mod.
 **Intent**: Invariant preserved. The app behaves exactly as before; routes and components reach layout state only through `$lib/layout`.
 **Boundary**: Routes and components → `$lib/layout`
 **Blocked by**: S5
+**Status**: done
+
+**Acceptance criteria**:
+- [x] Save, Discard, the close prompt, and the Bowties, Configuration and Railroad tabs behave as before.
+- [x] A guard test fails if a route or component imports an edit-layer store directly.
+- [x] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
+
+**Re-cut 2026-11-26**: inventory found 16 production consumers (routes `+page.svelte`, `config/+page.svelte`; components `BowtieCatalogPanel`, `ElementPicker`, `ConfigSidebar`, `configSidebarPresenter`, `ElementCard`, `EventSlotRow`, `SaveControls`, `SegmentView`, `TreeGroupAccordion`, `TreeLeafRow`, `FacilitiesSection`, `OfflineBanner`, `PanelCard`, `ChannelsPanel`). `SaveControls` owns an 8-step multi-store Discard sequence. No import guard exists.
+
+**Complexity**: large
+**User stories**: none (plan F8; ADR-0004, ADR-0011 consumer drift)
+
+**Decisions approved (2026-11-26, user: "Approved")**:
+- D1 (C): `$lib/layout` exposes getter-only, domain-grouped read projections (`layoutSession`, `bowtieCatalogView`, `configChangeView`, `facilitiesView`, `channelsView`; pending/connector views as needed) plus separately named edit/lifecycle commands. Projections carry no mutation members; raw stores are never re-exported. Dirty consumers use only `effectiveNodeStore.isDirty` / `dirtyBreakdown`.
+- D2 (B): Discard moves to an orchestrated `discardLayoutEdits()` exported through `$lib/layout`. A dedicated typed layout-edit participant registry (ADR-0012 contract, distinct from `LayoutScopedParticipant`) dispatches store `discard()`; the orchestrator keeps the special ordered phases explicit: pending-change revert first, layout restore before connector rehydration, backend `clearLayoutDrafts()` last. Facilities Discard keeps converted panels.
+- D3 (A): Vitest guard `app/src/lib/layout/facadeBoundary.test.ts` scans production `.ts`/`.svelte` under `app/src/routes/**` and `app/src/lib/components/**` via `import.meta.glob` raw source; forbids static, dynamic and type-only imports of the eight edit-bearing stores (`bowties`, `layout`, `bowtieMetadata`, `configChanges`, `channels`, `facilities`, `connectorSelections`, `pendingChanges`) by `$lib/stores/...` or relative path. `*.test.ts`, `*.integration.test.ts` and `*TestSupport.ts`/`*testSupport.ts` are exempt.
+
+**Tasks**:
+- [x] S6-T1: Guard test first (`facadeBoundary.test.ts`): RED against the 16 current consumers, including a self-check that a synthetic bypass (alias, relative, `import type`, dynamic) is detected and a test file is exempt.
+- [x] S6-T2: Discard orchestration: edit-participant registry + `discardLayoutEdits()` behind `$lib/layout`, with an order/coverage test (every dirty-breakdown store is registered; phase order preserved; migrated panels kept). `SaveControls` emits intent only; existing SaveControls/Discard tests stay green.
+- [x] S6-T3: Facade read projections and named commands (D1); route Bowties-tab consumers (`BowtieCatalogPanel`, `ElementPicker`, `ElementCard`, `EventSlotRow`).
+- [x] S6-T4: Route Configuration-tab consumers (`config/+page.svelte`, `ConfigSidebar`, `configSidebarPresenter`, `SegmentView`, `TreeGroupAccordion`, `TreeLeafRow`).
+- [x] S6-T5: Route Railroad and shell consumers (`FacilitiesSection`, `PanelCard`, `ChannelsPanel`, `OfflineBanner`, `SaveControls` reads) and `+page.svelte`, replacing raw dirty reads with the aggregate (`dirtyBreakdown` for dialog payload). Guard goes GREEN.
+- [x] S6-T6: Enrichment: ADR-0004 extension (projections + guard + eight-store scope), ADR-0011/0012 note on edit-participant registry and Discard owner; update aiwiki owners (fix stale `index.ts` re-export note), seams (Dirty Aggregation consumers, Lifecycle Reset/Discard), flows; plan audit rows → OK; backlog check.
+- [x] S6-T7: Validate the baseline-relative changed-file surface, `npm test`, `npm run build`, `npm run check` against the 112/2 baseline; runtime check of Save, Discard, close prompt and the three tabs.
+
+**Implementation checkpoint (2026-11-26)**: Discard orchestration, typed participant registry, exact-order and dirty-bucket coverage tests, facade consumer routing and import cleanup implemented. Full app tests: 1912 passed; build passed; check: 112 errors / 2 warnings (baseline). Facade guard mutation-check failed as expected on a synthetic direct import and passed after restoration; the earlier RED against all 16 consumers was not available to this coordinator, so S6-T1 remains unchecked pending audit. S6-T6 enrichment and S6-T7 runtime validation remain with the caller. S7 placeholder behavior is unchanged.
+
+**Caller verification (2026-11-26)**: S6-T1 RED is on record from the first coordinator (guard found 42 direct imports across 16 consumers before routing). Baseline-relative changed files match the expected surface (16 consumers, `layout/index.ts`, `SaveControls.test.ts`, new guard/registry/discard modules and tests; plus the separate model-pin doc edits). Discard order verified against the original sequence; route dirty reads verified equivalent (`layoutStruct` = `layoutStore.isDirty ? 1 : 0`, `metadata` = `bowtieMetadataStore.editCount`). Reran in `app`: `npm test -- --reporter=dot` 155 files / 1912 passed; `npm run build` passed; `npm run check` 112 errors / 2 warnings (baseline). Enrichment (T6): ADR-0004 and ADR-0012 extensions, plan audit rows OK, aiwiki owners/flows/seams/architecture-health; backlog unchanged (S7 is in this spec). Running-app check of Save, Discard, close prompt and the three tabs (S6-T7): user confirmed "Checks pass." S6 is done; progress 6/7.
+
+**Mid-slice escalation (2026-11-26) — D4 approved C (user: "C-S7")**: moving Discard revealed a pre-existing gap: `nodeRoster` has no saved baseline or discard, so Discard neither restores a deleted saved placeholder board (`unsavedRemovedNodes`) nor removes an added one (`unsavedNewNodes`); the toolbar stays dirty. S6 stays behavior-preserving: the edit-participant registry covers only stores with baseline-relative discard; per-node buckets are explicitly classified as dirty-but-not-yet-discardable, pinned by a known-gap test. The fix is S7.
+
+### S7: Discard undoes placeholder board add and delete [HITL]
+
+**Intent**: Discard restores a deleted saved placeholder board and removes an unsaved added one, so the toolbar clears.
+**Boundary**: SaveControls Discard → `discardLayoutEdits()` → new saved-layout membership participant → `nodeRoster` projection
+**Blocked by**: S6
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Save, Discard, the close prompt, and the Bowties, Configuration and Railroad tabs behave as before.
-- [ ] A guard test fails if a route or component imports an edit-layer store directly.
-- [ ] The page reads only the aggregate dirty flag. The ADR-0004 and ADR-0011 audit rows become OK.
+- [ ] Delete a saved placeholder board, then Discard: the board, its tree and name return; nothing is unsaved.
+- [ ] Add a placeholder board, then Discard: the board is gone; nothing is unsaved.
+- [ ] Discard behavior for newly discovered live nodes not yet in the layout is defined explicitly (expected: unchanged, not removed from the bus view) and tested.
+- [ ] The S6 known-gap test becomes a positive Discard test; every Dirty Aggregation bucket is discardable or explicitly exempt.
 
-<!-- Session: 2026-11-26 — S1-S5 done, including user acceptance of S5. Next: S6 (REFACTOR), unblocked and sketched. -->
+**Architecture note** *(HITL, new seam)*: per D4 (C), a dedicated layout-membership participant owns saved vs. current manifest node membership, add/remove deltas and Discard, projecting into `nodeRoster`; the roster stays the runtime identity/tree facade (ADR-0011, ADR-0012).
+
+<!-- Session: 2026-11-26 — S1-S5 done. S6 done (user-confirmed). Next: S7 (HITL, sketched, unblocked). -->
