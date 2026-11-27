@@ -136,6 +136,8 @@ While connected, block dots show **Occupied** or **Clear** as detection events a
 
 Review the signal rules shown for your selected blocks and boundary choices. The basic progression is Stop for an occupied protected block, Approach behind a signal showing Stop, and otherwise Clear. Joined blocks, turnout placeholders, and end conditions affect the displayed rules.
 
+![Automatic Block Signals Aspects page showing signal rules](../images/block-signals-aspects.png)
+
 Do not treat the diagram as confirmation that the board is already programmed.
 
 ### Appearance: review the signal
@@ -143,8 +145,6 @@ Do not treat the diagram as confirmation that the board is already programmed.
 Review the supported searchlight arrangement. Disabled choices indicate arrangements not currently supported, rather than settings you can apply.
 
 <!-- Screenshots needed: Aspects rules and Appearance with supported/disabled choices. -->
-
-![Automatic Block Signals Aspects page showing signal rules](../images/block-signals-aspects.png)
 
 ![Automatic Block Signals Appearance page with supported and disabled choices](../images/block-signals-appearance.png)
 
