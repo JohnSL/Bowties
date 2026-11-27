@@ -1,7 +1,7 @@
 ---
 description: TDD coordinator that implements ONE already-tasked slice via batched red+green cycles plus a single refactor, delegating to tdd-cycle and tdd-refactor workers so main-window growth stays constant per slice. Runs strictly downstream of /design and inside slices.md tracking.
 name: tdd-build
-model: gpt-5.6-terra
+model: gpt-6.1-terra
 user-invocable: false
 agents:
   - tdd-cycle
@@ -144,7 +144,7 @@ and test results are the durable evidence used to resume later.
 
 ## Model routing
 
-This coordinator, `tdd-cycle`, and `tdd-refactor` are pinned to GPT-5.6 Terra:
+This coordinator, `tdd-cycle`, and `tdd-refactor` are pinned to GPT-6.1 Terra:
 the measured workflow requires reliable multi-file implementation without the
 autonomy breadth of Sol. Architecture analysis remains owned by
 `change-analyze`, which is pinned separately.

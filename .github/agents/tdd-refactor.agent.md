@@ -1,7 +1,7 @@
 ---
 description: TDD Refactor phase — improve the structure of code just made green, with depth/placement guardrails, stopping for architecture-first-fix when a deeper seam problem surfaces.
 name: tdd-refactor
-model: gpt-5.6-terra
+model: gpt-6.1-terra
 user-invocable: false
 agents: []
 ---

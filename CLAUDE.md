@@ -14,7 +14,7 @@ The instructions above, and the shared prompts, skills, and agent definitions, w
 | Skills | `.claude/skills/`, shared by both tools. |
 | `.github/prompts/*.prompt.md` (`/bugfix`, `/quickchange`, `/speckit.*`, ...) | Wrapper commands in `.claude/commands/` that read the canonical prompt. |
 | Agents `change-analyze`, `tdd-cycle`, `tdd-refactor` | Subagents in `.claude/agents/` that read their canonical `.github/agents/*.agent.md`. |
-| Model pins: GPT-5.6 Luna / Terra / Sol | `haiku` for Explore-style retrieval, `sonnet` for `tdd-cycle` and `tdd-refactor`, `opus` for `change-analyze`. |
+| Model pins: GPT-6 Luna / GPT-6.1 Terra / GPT-6.1 Sol | `haiku` for Explore-style retrieval, `sonnet` for `tdd-cycle` and `tdd-refactor`, `opus` for `change-analyze`. |
 | `Explore` subagent | The built-in `Explore` agent (main conversation only). |
 | `manage_todo_list` | `TodoWrite` |
 | `vscode_askQuestions` | `AskUserQuestion`. Skills that say to present decisions in a single chat message still mean a plain message. |
