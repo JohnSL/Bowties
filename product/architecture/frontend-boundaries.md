@@ -133,6 +133,21 @@ Stores should not own:
 - broad multi-step async sequencing unless the store is explicitly documented as that workflow owner
 - duplicated helper logic that belongs in utilities
 
+#### Panel wiring selection
+
+`PanelEditorStore.selectEntry` owns the complete deterministic block-selection
+transition. Selecting a wired block shows its assigned lamp board in the Wiring
+picker and pin grid. Selecting an unwired block retains the current browsing
+board. Explicit board browsing does not change the lamp assignment; selecting a
+wired block again restores its assigned board.
+
+Navigation clears stale message and pending-release presentation without
+reassigning lamps, recording releases, or staging configuration changes. The
+orchestrator forwards selection and loads wiring facts; components render the
+selected context and emit intent. Store regression tests guard the transition,
+orchestrator tests guard saved-edit selection across facts loading, and Wiring
+component tests guard mouse/keyboard board and pin context.
+
 ### Utilities
 
 Current utility areas include:

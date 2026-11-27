@@ -325,6 +325,49 @@ describe('panelEditorOrchestrator edit', () => {
     expect(store.lampFor('e2')).toBeNull();
   });
 
+  it('follows saved entries to their boards before and after wiring facts arrive without staging changes', async () => {
+    const otherNode = '050101010102';
+    panelCardEntriesMock.mockReturnValue([
+      {
+        entryId: 'e1', blockId: 'block:a', blockName: 'Block A', blockMissing: false,
+        lamp: { channelId: 'l1', nodeKey: NODE, boardName: 'Board 1', boardMissing: false, pin: 9, pinLabel: '#9 H3-G' },
+      },
+      {
+        entryId: 'e2', blockId: 'block:b', blockName: 'Block B', blockMissing: false,
+        lamp: { channelId: 'l2', nodeKey: otherNode, boardName: 'Board 2', boardMissing: false, pin: 10, pinLabel: '#10 H3-G' },
+      },
+    ]);
+    let resolveFacts!: (value: PanelWiringFacts) => void;
+    panelWiringFactsMock.mockReturnValue(new Promise((resolve) => { resolveFacts = resolve; }));
+    actions.startPanelEdit(SAVED);
+    const entries = JSON.parse(JSON.stringify(store.entries));
+    const deltas = JSON.parse(JSON.stringify(facilitiesStore.collectDeltas()));
+    const loading = actions.goTo('wiring');
+    await vi.waitFor(() => expect(panelWiringFactsMock).toHaveBeenCalledTimes(1));
+
+    actions.selectEntry('e2');
+    expect(store.boardNodeKey).toBe(otherNode);
+    expect(store.factsLoaded).toBe(false);
+    resolveFacts({
+      ...facts(),
+      boards: [...facts().boards, { ...facts().boards[0], nodeKey: otherNode, name: 'Board 2' }],
+    });
+    await loading;
+    expect(store.boardNodeKey).toBe(otherNode);
+    actions.selectEntry('e1');
+    expect(store.boardNodeKey).toBe(NODE);
+    actions.selectEntry('e2');
+    expect(store.boardNodeKey).toBe(otherNode);
+    await actions.goTo('blocks');
+    await actions.goTo('wiring');
+    expect(panelWiringFactsMock).toHaveBeenCalledTimes(1);
+    expect(store.entries).toEqual(entries);
+    expect(facilitiesStore.collectDeltas()).toEqual(deltas);
+    expect(store.releases).toEqual([]);
+    expect(createPanelFacilityMock).not.toHaveBeenCalled();
+    expect(updatePanelFacilityMock).not.toHaveBeenCalled();
+  });
+
   it('matches saved entry overrides by entryId even when effective entries are reordered', async () => {
     facilitiesStore.hydrateBaseline([{
       facilityId: SAVED, templateId: 'panel', name: 'Saved panel', slotBindings: {},

@@ -178,6 +178,8 @@ class PanelEditorStore {
 
   selectEntry(entryId: string | undefined): void {
     this._selectedEntryId = entryId;
+    const lamp = this._entries.find((entry) => entry.entryId === entryId)?.lamp;
+    if (lamp) this._boardNodeKey = lamp.nodeKey;
     this._message = undefined;
     this._pendingRelease = null;
   }

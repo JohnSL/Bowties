@@ -82,6 +82,38 @@ describe('Panel editor Wiring step', () => {
     expect(screen.getByRole('button', { name: /Board/ })).toHaveTextContent('West Signals');
   });
 
+  it('click and keyboard selection follow each wired block to its board without changing assignments', async () => {
+    await openOnWiring();
+    await fireEvent.click(row('Main 1'));
+    await fireEvent.click(pin(/^#9 H3-G: Free/));
+    await fireEvent.click(row('Main 2'));
+    await fireEvent.click(screen.getByRole('button', { name: /Board/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Choose a Signal LCC' });
+    await fireEvent.click(within(dialog).getByRole('radio', { name: /West Signals/ }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    await fireEvent.click(pin(/^#16 H4-L: Free/));
+    const assignments = JSON.parse(JSON.stringify(panelEditorStore.entries));
+
+    await fireEvent.click(row('Main 1'));
+    expect(screen.getByRole('button', { name: /Board/ })).toHaveTextContent('Eagle Creek Fascia');
+    expect(screen.getByRole('group', { name: 'Pins on Eagle Creek Fascia' })).toBeInTheDocument();
+    expect(pin(/^#9 H3-G: This block/)).toBeInTheDocument();
+
+    await fireEvent.keyDown(row('Main 2'), { key: 'Enter' });
+    expect(screen.getByRole('button', { name: /Board/ })).toHaveTextContent('West Signals');
+    expect(screen.getByRole('group', { name: 'Pins on West Signals' })).toBeInTheDocument();
+    expect(pin(/^#16 H4-L: This block/)).toBeInTheDocument();
+
+    await fireEvent.keyDown(row('Main 1'), { key: ' ' });
+    expect(screen.getByRole('button', { name: /Board/ })).toHaveTextContent('Eagle Creek Fascia');
+    expect(screen.getByRole('group', { name: 'Pins on Eagle Creek Fascia' })).toBeInTheDocument();
+    expect(pin(/^#9 H3-G: This block/)).toBeInTheDocument();
+    expect(panelEditorStore.entries).toEqual(assignments);
+    expect(panelEditorStore.releases).toEqual([]);
+    expect(panelWiringFactsMock).toHaveBeenCalledTimes(1);
+    expect(createPanelFacilityMock).not.toHaveBeenCalled();
+  });
+
   it('a free pin wires the block and clicking it again clears it', async () => {
     await openOnWiring();
     await fireEvent.click(row('Main 1'));

@@ -153,6 +153,41 @@ describe('panelEditorStore blocks step', () => {
 describe('panelEditorStore edit mode', () => {
   beforeEach(() => store.reset());
 
+  it('restores a wired entry’s board on selection without changing assignments or releases', () => {
+    store.startEdit({
+      facilityId: 'f', name: 'Panel', litWhen: 'occupied',
+      entries: [
+        { entryId: 'a', blockId: 'block:a', blockName: 'A' },
+        { entryId: 'b', blockId: 'block:b', blockName: 'B', lamp: { nodeKey: 'node2', output: 4 } },
+        { entryId: 'c', blockId: 'block:c', blockName: 'C' },
+      ],
+    });
+    const owner = { nodeKey: 'node1', owner: 'Direct lamp 4' };
+    store.releaseAndSeat('a', owner, 'node1', 3);
+    const entries = JSON.parse(JSON.stringify(store.entries));
+    store.setBoard('node3');
+    store.setMessage({ kind: 'warn', text: 'Warning' });
+    store.setPendingRelease({ owner, nodeKey: 'node1', output: 3, description: 'Lamp' });
+
+    store.selectEntry('a');
+    expect(store.boardNodeKey).toBe('node1');
+    expect(store.message).toBeUndefined();
+    expect(store.pendingRelease).toBeNull();
+    store.selectEntry('b');
+    expect(store.boardNodeKey).toBe('node2');
+    store.selectEntry('a');
+    expect(store.boardNodeKey).toBe('node1');
+    store.setBoard('node3');
+    store.selectEntry('c');
+    expect(store.boardNodeKey).toBe('node3');
+    store.selectEntry(undefined);
+    expect(store.boardNodeKey).toBe('node3');
+    store.selectEntry('a');
+    expect(store.boardNodeKey).toBe('node1');
+    expect(store.entries).toEqual(entries);
+    expect(store.releases).toEqual([owner]);
+  });
+
   it('startEdit keeps the facility id, opens in edit mode on Blocks with entries and lamps filled', () => {
     store.startEdit({
       facilityId: 'fac-1',
