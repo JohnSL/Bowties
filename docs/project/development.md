@@ -29,6 +29,20 @@ npm run tauri build
 
 ## Testing
 
+Run all four test suites (frontend, core domain, Tauri backend, and protocol
+library) from the repository root using PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File .\app\run-all-tests.ps1
+```
+
+The script reports test counts and runner status separately and returns a
+nonzero exit code for test, compilation, startup, or invocation failures. Cargo
+uses the existing lockfiles. When editing the runner itself, also run
+`pwsh -NoProfile -File .\app\run-all-tests.Tests.ps1`.
+
+For focused validation:
+
 ```bash
 # lcc-rs protocol library
 cd lcc-rs

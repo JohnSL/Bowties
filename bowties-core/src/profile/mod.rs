@@ -2385,73 +2385,130 @@ mod tests {
 
     #[test]
     fn bundled_detector_boards_constrain_producer_actions_per_replication() {
-        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
-            .expect("bundled shared daughterboard library should parse");
-
-        // Spec 018 / S3 (ADR-0013): producer-action constraints for BOD-family
-        // detector boards live on the `bod-block-detector-input` style, not on
-        // the daughterboard entries (which retired their inline `validity_rules`
-        // when the style catalog landed). The active CDI variant the user has
-        // selected determines which rule set applies — base for legacy CDIs,
-        // `tower-lcc-c7` for the rev-C7 firmware.
+        let library = load_bundled_shared_daughterboards();
+        let profile = load_bundled_tower_lcc_profile();
         let style = library
             .styles
             .iter()
             .find(|candidate| candidate.style_id == "bod-block-detector-input")
             .expect("library must declare bod-block-detector-input style");
+        let c7_variant = style
+            .constraint_variants
+            .iter()
+            .find(|candidate| candidate.variant_id == "tower-lcc-c7")
+            .expect("style must declare C7 constraints");
+        assert!(c7_variant.replace_base_constraints);
+        assert!(style.constraints.iter().chain(&c7_variant.constraints).all(|rule| {
+            rule.line_ordinals.is_empty()
+        }), "detector line ordinals must be inherited from each board's channel inputs");
+        assert!(style.constraints.iter().chain(&c7_variant.constraints).all(|rule| {
+            rule.target_path != "Port I/O/Line/Delay"
+        }), "style sources must preserve input debounce controls even when a CDI omits Delay");
+        let legacy_cdi = parse_cdi(include_str!("../../tests/fixtures/cdi/tower-lcc-legacy.xml"))
+            .expect("captured legacy Tower-LCC CDI must parse");
+        assert!(resolver::resolve_named_path("Port I/O/Line/Delay", &legacy_cdi).is_ok());
 
-        for variant_id in ["base", "tower-lcc-c7"] {
-            let rules: &[types::ConnectorConstraintRule] = if variant_id == "base" {
-                &style.constraints
-            } else {
-                &style
-                    .constraint_variants
+        for (variant_id, cdi, input_value, expected_rule_count) in [
+            ("base", legacy_cdi, 2, 5),
+            ("tower-lcc-c7", make_tower_lcc_c7_cdi(), 1, 7),
+        ] {
+            let connector_profile = build_connector_profile(
+                "05.02.01.02.03.00.00.01",
+                &profile,
+                Some(&library),
+                &cdi,
+            )
+            .expect("bundled Tower-LCC connector profile must build");
+
+            for (board_id, input_count) in [("BOD4", 4), ("BOD4-CP", 4), ("BOD-8-SM", 8)] {
+                let board = library
+                    .daughterboards
                     .iter()
-                    .find(|candidate| candidate.variant_id == variant_id)
-                    .unwrap_or_else(|| panic!("style must declare a {variant_id} variant"))
-                    .constraints
-            };
+                    .find(|candidate| candidate.daughterboard_id == board_id)
+                    .unwrap_or_else(|| panic!("{board_id} must exist"));
+                assert!(board.validity_rules.is_empty(), "{board_id} must not duplicate style rules");
+                assert!(board.constraint_variants.is_empty(), "{board_id} must not duplicate style variants");
+                let channel_inputs = &board.metadata.as_ref().expect("board metadata").channel_inputs;
+                assert_eq!(channel_inputs.len(), 1);
+                assert_eq!(channel_inputs[0].style.as_deref(), Some(style.style_id.as_str()));
+                let expected_lines: Vec<u32> = (1..=input_count).collect();
+                assert_eq!(channel_inputs[0].inputs, expected_lines);
+                assert_eq!(channel_inputs[0].event_mapping["occupied"].producer_leaf_index, 0);
+                assert_eq!(channel_inputs[0].event_mapping["clear"].producer_leaf_index, 1);
 
-            // Slot 1 (producerLeafIndex 0 = occupied) must be Input On
-            let slot1_rule = rules
-                .iter()
-                .find(|rule| {
-                    rule.target_path == "Port I/O/Line/Event#2/Upon this action"
-                        && rule.constraint_type == types::ConnectorConstraintType::AllowValues
-                        && rule.replication_ordinals == vec![1]
-                })
-                .unwrap_or_else(|| panic!("{variant_id} should constrain producer slot 1"));
-            assert_eq!(
-                slot1_rule.allowed_values,
-                vec![types::ProfileScalarValue::Integer(5)],
-                "{variant_id} slot 1 should be forced to Input On (occupied — detector output goes low, Active Lo / Low (0V) polarity makes logical input ON)"
-            );
+                for slot in &connector_profile.slots {
+                    let rules = &slot.supported_daughterboard_constraints
+                        .iter()
+                        .find(|entry| entry.daughterboard_id == board_id)
+                        .unwrap_or_else(|| panic!("{board_id} must be projected on {}", slot.slot_id))
+                        .validity_rules;
+                    assert_eq!(rules.len(), expected_rule_count, "{board_id} {variant_id} must use one rule source");
+                    assert!(rules.iter().all(|rule| rule.line_ordinals == expected_lines));
+                    let input_rule = rules.iter()
+                        .find(|rule| rule.target_path == "Port I/O/Line/Input Function")
+                        .expect("detector input function must be constrained");
+                    assert_eq!(input_rule.effect, ConnectorConstraintEffect::AllowValues);
+                    assert_eq!(input_rule.allowed_values, vec![ConnectorScalarValue::Integer(input_value)]);
 
-            // Slot 2 (producerLeafIndex 1 = clear) must be Input Off
-            let slot2_rule = rules
-                .iter()
-                .find(|rule| {
-                    rule.target_path == "Port I/O/Line/Event#2/Upon this action"
-                        && rule.constraint_type == types::ConnectorConstraintType::AllowValues
-                        && rule.replication_ordinals == vec![2]
-                })
-                .unwrap_or_else(|| panic!("{variant_id} should constrain producer slot 2"));
-            assert_eq!(
-                slot2_rule.allowed_values,
-                vec![types::ProfileScalarValue::Integer(6)],
-                "{variant_id} slot 2 should be forced to Input Off (clear — detector output goes high, Active Lo / Low (0V) polarity makes logical input OFF)"
-            );
+                    let producer_rules: Vec<_> = rules.iter()
+                        .filter(|rule| rule.target_path == "Port I/O/Line/Event#2/Upon this action")
+                        .collect();
+                    assert_eq!(producer_rules.len(), 2, "only occupied and clear replications are constrained");
+                    for (ordinal, action, label) in [(1, 5, "Input On"), (2, 6, "Input Off")] {
+                        let rule = producer_rules.iter()
+                            .find(|rule| rule.replication_ordinals == vec![ordinal])
+                            .expect("occupied/clear producer replication must be constrained");
+                        assert_eq!(rule.effect, ConnectorConstraintEffect::AllowValues);
+                        assert_eq!(rule.allowed_values, vec![ConnectorScalarValue::Integer(action)]);
+                        assert_eq!(rule.allowed_value_labels, vec![label.to_string()]);
+                    }
 
-            // No broad all-replications rule should exist on the producer action path.
-            let broad_rule = rules.iter().any(|rule| {
-                rule.target_path == "Port I/O/Line/Event#2/Upon this action"
-                    && rule.constraint_type == types::ConnectorConstraintType::AllowValues
-                    && rule.replication_ordinals.is_empty()
-            });
-            assert!(
-                !broad_rule,
-                "{variant_id} should not have a broad constraint on all producer event replications"
-            );
+                    let command_drive = rules.iter().find(|rule| rule.target_path ==
+                        "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:");
+                    if variant_id == "tower-lcc-c7" {
+                        assert_eq!(command_drive.expect("C7 must hide command-drive polarity").effect,
+                            ConnectorConstraintEffect::Hide);
+                    } else {
+                        assert!(command_drive.is_none());
+                    }
+                    assert!(rules.iter().all(|rule| rule.target_path != "Port I/O/Line/Delay"),
+                        "{board_id} {variant_id} must preserve input debounce controls");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_output_board_projects_inline_producer_action_rules() {
+        let library = load_bundled_shared_daughterboards();
+        let board = library.daughterboards.iter()
+            .find(|candidate| candidate.daughterboard_id == "OI-OB-8")
+            .expect("OI-OB-8 must exist");
+        assert!(board.metadata.as_ref().expect("board metadata").channel_inputs.is_empty());
+        let source_rule = board.validity_rules.iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Event#2/Upon this action")
+            .expect("nonstyled output board must retain inline producer constraints");
+        let expected: Vec<_> = (0..=4).map(ConnectorScalarValue::Integer).collect();
+        assert_eq!(source_rule.allowed_values,
+            (0..=4).map(types::ProfileScalarValue::Integer).collect::<Vec<_>>());
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &load_bundled_tower_lcc_profile(),
+            Some(&library),
+            &make_tower_lcc_legacy_cdi(),
+        ).expect("bundled Tower-LCC connector profile must build");
+        for slot in &connector_profile.slots {
+            let rules = &slot.supported_daughterboard_constraints.iter()
+                .find(|entry| entry.daughterboard_id == "OI-OB-8")
+                .expect("output board must be projected")
+                .validity_rules;
+            let producer_rule = rules.iter()
+                .find(|rule| rule.target_path == source_rule.target_path)
+                .expect("inline producer rule must reach the slot projection");
+            assert_eq!(producer_rule.effect, ConnectorConstraintEffect::AllowValues);
+            assert_eq!(producer_rule.allowed_values, expected);
+            assert!(producer_rule.replication_ordinals.is_empty());
         }
     }
 

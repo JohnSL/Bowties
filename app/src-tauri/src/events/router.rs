@@ -359,7 +359,7 @@ mod tests {
             timestamp: "2026-05-31T00:00:00Z".into(),
         };
         let json = serde_json::to_value(&event).unwrap();
-        assert_eq!(json["nodeId"], "020157000002D9");
+        assert_eq!(json["nodeId"], "0201570002D9");
         assert_eq!(json["alias"], 0x123);
     }
 }

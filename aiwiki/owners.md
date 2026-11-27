@@ -16,6 +16,20 @@
 
 Governing docs: `product/architecture/code-placement-and-ownership.md`, `product/architecture/frontend-boundaries.md`
 
+### Project test runner
+
+`app/run-all-tests.ps1` owns complete test orchestration: Vitest, bowties-core,
+Tauri backend, and lcc-rs. `Invoke-SuiteCommand` scopes working directories and
+captures each invocation's exit/error outcome independently of parsed test
+counts. Missing summaries and command/build/harness failures are reported as
+runner failures, not fabricated failed tests; all suites still run before the
+final exit status. Cargo uses `--locked`.
+
+`app/run-all-tests.Tests.ps1` exercises the real script in child PowerShell
+processes with isolated native runner doubles. It guards suite inclusion,
+arguments/working directories, failure isolation, summary parsing, and exit
+status without executing application tests.
+
 ### Spec 021 S5: canonical migration and retired surfaces
 
 These current owners supersede historical Block Indicator composition and
@@ -415,8 +429,17 @@ thin shim modules so existing `crate::` paths compile unchanged.
 
 ### Tauri app shell (`app/src-tauri/src/`)
 
+Bundled daughterboard semantics are tested at the core projection owner,
+`profile/mod.rs`: `bundled_detector_boards_constrain_producer_actions_per_replication`
+checks style-owned BOD rules, inherited board input ordinals, legacy/C7 projection,
+occupied/clear polarity, and preserved Delay controls;
+`bundled_output_board_projects_inline_producer_action_rules` protects non-styled
+OI-OB-8 rules. The Tauri loader tests resource loading and bundle integrity, not a
+second constraint-source contract.
+
 | Module | Purpose | Test |
 |--------|---------|------|
+| `../build.rs` | Windows MSVC activation owner: one Common Controls v6 identity supplies Tauri's manifest and generic linker dependency. Library harnesses generate a manifest; binary/cdylib overrides prevent duplicate manifests while retaining Tauri's binary resources. Non-MSVC builds keep Tauri's default path. | Actual backend harness startup via `cargo test`; `cargo build --bin bowties` guards duplicate-resource linking. |
 | `lib.rs` | Entry point: connection init, state setup, command registration. Window close is handled by the frontend (see `+page.svelte` `onCloseRequested`); the backend provides `disconnect_lcc` as an IPC command but does not intercept the close event. | — |
 | `main.rs` | Tauri desktop app launcher | — |
 | `state.rs` | Authoritative app state: one optional `ConnectionSession` aggregate plus app-scoped registry, caches, layout state, and `TuningConfig`. Exposes focused accessors for command consumers and atomically claims the aggregate for explicit disconnect. | inline `#[cfg(test)]` |
@@ -430,7 +453,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `profile/loader.rs` | `.profile.yaml` loading; depends on `tauri::AppHandle` for resource-dir resolution. Bundled-profile listing for placeholder picker. Owns CDI identity → profile resolution: `find_profile_path_by_identity` matches each file's declared `nodeType` via `make_profile_key` (first search dir wins, sorted within a dir). File names/stems are not identity — the stem is only the persisted placeholder key (ADR-0009 2026-11-19 extension). Also owns the bundle-integrity test over the real `profiles/` dir: every picker stem has a loadable `<stem>.cdi.xml` whose identity resolves back to that profile, and no two bundled profiles share a `nodeType` key. | inline `#[cfg(test)]` (`find_profile_path_by_identity_*`, `bundled_profiles_each_have_loadable_cdi_whose_identity_round_trips`) |
 | `placeholder.rs` | **Placeholder factory orchestrator** (S8.10). Owns `synthesize`/`reconstitute` (Tauri-dependent). Re-exports pure helpers from `bowties_core::placeholder`. | — |
 | `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats, frame activity ring buffer (`FrameRing`), structured errors (`DiagError`), human-readable summary | — |
-| `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
+| `events/router.rs` | Event broadcast: transport frames → Tauri events. Discovery payloads delegate Node ID serialization to `NodeKey`: six bytes become 12 uppercase contiguous hex characters. | inline `#[cfg(test)]` (`discovered_event_serializes_node_id_as_canonical_string`) |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
 | `menu.rs` | Native OS menu bar: builds File / Edit / View / Tools submenus on all platforms (+ Help on Windows/Linux, + App submenu first on macOS), returns `MenuHandles` for runtime enable/disable. Edit uses `PredefinedMenuItem` cut/copy/paste/select_all everywhere; undo/redo are added only on macOS because WebView2/WebKitGTK don't respond to the platform undo/redo commands the predefined items dispatch, so on Windows/Linux they would appear as non-functional entries (Ctrl+Z / Ctrl+Y still work natively inside text fields there). The Edit menu is required on macOS so Cmd+C/V reach WKWebView text fields via the AppKit responder chain (issue #19); on Windows/Linux it's discoverability chrome since the WebView handles those shortcuts natively. On macOS the App submenu hosts About/Services/Hide/Quit; About and Quit are custom `MenuItem`s (ids `menu-about`, `menu-exit`) on all platforms so `on_menu_event` still fires the frontend AboutDialog / unsaved-changes exit prompt; Services/Hide/HideOthers/ShowAll must be predefined. | — |
 ---

@@ -12,18 +12,23 @@ Inconsistent application of these rules has been a direct source of regressions 
 
 ### Canonical Form
 
-The canonical Node ID form used for all comparisons is: **uppercase hex, no separators**.
+The canonical live Node ID form is **exactly six bytes / 12 uppercase hex
+characters, no separators**. Backend `NodeKey` owns canonical display and serde
+serialization, including discovery-event payloads.
 
-Example: `05.02.01.02.00.00.00.FF` normalizes to `050201020000FF`.
+Example: `02.01.57.00.02.D9` normalizes to `0201570002D9`.
 
 ### Why Two Forms Exist
 
 LCC Node IDs appear in two forms across the codebase:
 
-- **Dotted hex** — `05.02.01.02.00.00.00.FF` — used for display and serialization in layout files, SNIP, and CDI output.
-- **Canonical hex** — `050201020000FF` — used for all comparisons, map keys, and identity checks.
+- **Dotted hex** — `02.01.57.00.02.D9` — used for display and accepted as live-identity input.
+- **Canonical hex** — `0201570002D9` — used for comparisons, map keys, and typed backend `NodeKey` serialization.
 
-The backend may produce either form depending on source (SNIP data vs. node tree IDs). The frontend must normalize before comparing.
+Legacy or display-oriented sources may contain dotted identifiers. Normalize
+those before comparison; do not change canonical backend serialization to match
+a display form. Placeholder `NodeKey` values use `placeholder:<uuid>` and are not
+live six-byte Node IDs.
 
 ### Normalization Helper
 
@@ -31,7 +36,7 @@ All normalization must use `normalizeNodeId()` from `app/src/lib/utils/nodeId.ts
 
 ```ts
 import { normalizeNodeId } from '$lib/utils/nodeId';
-// "05.02.01.02.00.00.00.ff" → "050201020000FF"
+// "02.01.57.00.02.d9" → "0201570002D9"
 const key = normalizeNodeId(nodeId);
 ```
 
@@ -52,7 +57,7 @@ export function normalizeNodeId(nodeId?: string): string {
 | Storing a Node ID in a store or backend struct | Store in whichever form the API expects; normalize before compare |
 | Displaying a Node ID to the user | Use dotted-hex display form (see `formatNodeId()`) |
 | Reading a Node ID from SNIP or layout YAML | Normalize immediately before using as a key |
-| Writing a Node ID to layout YAML or snapshot | Use the dotted-hex form from the source; do not normalize the stored value |
+| Writing a typed `NodeKey` to layout YAML or snapshot | Use its canonical serde representation; do not introduce dotted serialization |
 
 ### Formatting Helper
 
@@ -60,7 +65,7 @@ For display purposes only, convert a 6-byte array to dotted hex:
 
 ```ts
 import { formatNodeId } from '$lib/utils/nodeId';
-// [5, 2, 1, 2, 0, 0, 0, 255] → "05.02.01.02.00.00.FF"
+// [2, 1, 87, 0, 2, 217] → "02.01.57.00.02.D9"
 const display = formatNodeId(bytes);
 ```
 
@@ -68,7 +73,7 @@ For round-trip conversion from a string to bytes:
 
 ```ts
 import { nodeIdStringToBytes } from '$lib/utils/nodeId';
-const bytes = nodeIdStringToBytes('05.02.01.02.00.00.00.FF');
+const bytes = nodeIdStringToBytes('02.01.57.00.02.D9');
 ```
 
 ---

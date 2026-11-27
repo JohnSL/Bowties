@@ -34,6 +34,32 @@ When application tests are not applicable, report:
 
 `Tests not run: changed files contain no source, test, dependency, build, generated runtime asset, or runtime configuration changes.`
 
+## Complete Test Runner
+
+From the Bowties repository root, use PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File .\app\run-all-tests.ps1
+```
+
+This runs Vitest, bowties-core, Tauri backend, and lcc-rs, then reports per-suite
+test counts and status. Paths and working directories are script-relative;
+Cargo runs with `--locked`. Each suite runs even if an earlier suite fails.
+
+The script exits `1` when tests fail, a runner returns a nonzero exit code,
+command invocation fails, or no recognized completion summary appears.
+Execution failures remain separate from failed-test counts, so a compilation or
+loader failure cannot appear as a successful `0 passed / 0 failed` suite.
+Recognized zero-test summaries are valid.
+
+For changes to this orchestration contract, first run its dependency-free
+regression harness, then the real complete runner:
+
+```powershell
+pwsh -NoProfile -File .\app\run-all-tests.Tests.ps1
+pwsh -NoProfile -File .\app\run-all-tests.ps1
+```
+
 ## Test Layers
 
 ### Store Tests
@@ -111,6 +137,30 @@ Use Rust backend tests for:
 - backend state coordination
 
 When the rule is backend-specific, prefer a Rust test over indirectly proving it only through frontend tests.
+
+#### Windows Harness Activation
+
+`app/src-tauri/build.rs` owns Windows MSVC Common Controls v6 activation.
+Library-test executables must start without a manually embedded manifest or an
+adjacent manifest sidecar. Tauri retains ownership of binary icons/version
+resources; binary/cdylib linker overrides prevent duplicate manifest generation.
+Non-MSVC targets retain Tauri's default build behavior.
+
+When changing this build policy, validate both a newly linked test harness and
+the application binary. Running the backend suite guards loader startup itself:
+a Rust test cannot assert activation after the loader has already failed.
+
+From the Bowties repository root:
+
+```powershell
+cargo test --manifest-path app\src-tauri\Cargo.toml --locked
+cargo build --manifest-path app\src-tauri\Cargo.toml --locked --bin bowties
+cargo check --manifest-path app\src-tauri\Cargo.toml --locked --all-targets
+```
+
+Verify artifacts were actually relinked and inspect embedded Common Controls v6
+activation and unchanged binary resources. A cached, externally repaired harness
+is not evidence that the build policy works.
 
 ### `lcc-rs` Tests
 

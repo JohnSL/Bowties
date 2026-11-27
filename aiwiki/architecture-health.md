@@ -241,6 +241,16 @@ Open candidates:
 - **Result**: bowties-core runs 310 tests via `cargo test`. ADR-0010 extended to document all four phases.
 - **Outstanding**: `placeholder.rs` and `profile/loader.rs` remain in src-tauri (depend on `AppHandle`). Their pure helper functions could be trait-injected and moved in a follow-up. `commands/bowties.rs` layout YAML + protocol exchange halves are still mixed together (partial resolution noted above).
 
+**Windows harness activation (2026-11-27):** The current reproducible startup gap
+was missing Common Controls v6 activation in library-test executables, not an
+established WebView2Loader defect. Tauri linked its resource packet only to
+binaries. `app/src-tauri/build.rs` now shares the activation identity between
+Tauri's manifest and generic MSVC manifest generation; binary/cdylib overrides
+avoid generating a second manifest. Fresh harness startup and binary resource
+preservation were verified without sidecars or executable repair. Backend tests
+now execute normally. Pure-domain extraction remains an ownership benefit, not a
+prerequisite for running every backend test.
+
 ### Saved layout config not seeded into backend proxies (resolved)
 - **Area**: `node_registry.rs`, `commands/layout_capture.rs`, `commands/cdi.rs`
 - **Risk** (resolved): When a layout was opened and a previously-saved node was rediscovered on the bus, its `LiveNodeProxy` spawned with `config_tree: None`. The previously-captured config existed only in the frontend's `nodeTreeStore` (loaded from snapshot). Three compounding bugs:
